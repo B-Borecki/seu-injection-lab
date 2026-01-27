@@ -10,8 +10,8 @@
 /*
  *  PROTECT_MODE:
  *    0 = no protection (baseline)
- *    1 = TMR on input sample (curr)
- *    2 = slew-rate limiting on command (cmd)
+ *    1 = TMR (curr)
+ *    2 = slew-rate limiting (cmd)
  *    3 = both (TMR + SRL)
  */
 #ifndef PROTECT_MODE
@@ -43,15 +43,16 @@ typedef struct {
   int32_t  mx;
   int32_t  my;
   int32_t  mz;
-  uint32_t sat_flags; /* bit0=X, bit1=Y, bit2=Z */
+  uint32_t sat_flags; // bit0=X, bit1=Y, bit2=Z
 } coil_cmd_t;
 
 static QueueHandle_t q_mag_samples;
 static QueueHandle_t q_cmds;
 
-static volatile uint32_t g_tmr_calls   = 0; // #samples processed through TMR path
-static volatile uint32_t g_srl_calls   = 0; // #commands processed through SRL path
-static volatile uint32_t g_srl_clamps  = 0; // #axis clamps actually applied
+// Stats
+static volatile uint32_t g_tmr_calls   = 0;
+static volatile uint32_t g_srl_calls   = 0;
+static volatile uint32_t g_srl_clamps  = 0;
 
 
 __attribute__((noinline))
@@ -80,7 +81,7 @@ void end_hook(void) {}
 
 
 static void uart_putc(char c) {
-  while (UARTFR & (1u << 5)) { /* TXFF */ }
+  while (UARTFR & (1u << 5)) {}
   UARTDR = (uint32_t)c;
 }
 
@@ -123,7 +124,6 @@ static void task_sensor(void *arg) {
   (void)arg;
 
   uint32_t seq = 0;
-
   // Base field (synthetic, constant)
   const int32_t BX0 = 20000;
   const int32_t BY0 = -5000;
@@ -161,7 +161,6 @@ static void task_controller(void *arg) {
 
   mag_sample_t prev;
   mag_sample_t curr;
-
   // First sample for prev init
   if (xQueueReceive(q_mag_samples, &curr, portMAX_DELAY) == pdPASS) {
     prev = curr;
@@ -357,7 +356,6 @@ static void task_actuator(void *arg) {
     }
   }
 }
-
 
 int main(void) {
   q_mag_samples = xQueueCreate(8, sizeof(mag_sample_t));

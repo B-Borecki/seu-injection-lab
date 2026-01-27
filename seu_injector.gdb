@@ -1,7 +1,6 @@
 set pagination off
 set confirm off
 
-# Inicjalizacja zmennych
 set $SEU_POW2 = 7
 set $BIT_MAX  = 31
 
@@ -12,26 +11,19 @@ load
 set $flip_cnt = 0
 
 define maybe_inject
-  # Użyj jawnego rzutowania dla bezpieczeństwa
   set $seq = (unsigned int)$arg0
   
-  # Oblicz salt i r
   set $salt = (unsigned int)($SEU_MODE) * 0x9E3779B1u
   set $r = (unsigned int)(($seq ^ $salt) * 1103515245u + 12345u)
   
-  # Oblicz maskę
   set $mask = (1u << (unsigned int)$SEU_POW2) - 1u
   
-  # Warunek iniekcji
   if (($r & $mask) == 0u)
     set $bit = (int)(($r >> 8) & 31u)
     set $bit = $bit % ((int)$BIT_MAX + 1)
     
-    # Pobierz aktualną wartość
     set $current_val = *(uint32_t*)$arg1
-    # Odwróć bit
     set $new_val = $current_val ^ (1u << $bit)
-    # Zapisz z powrotem
     set *(uint32_t*)$arg1 = $new_val
     
     set $flip_cnt = $flip_cnt + 1
@@ -43,12 +35,11 @@ end
 break seu_hook_prev
 commands
   silent
-  # Porównanie z zerem jako unsigned
+
   if ($SEU_MODE != 0)
     continue
   end
   
-  # Sprawdzenie seq - użyj jawnych rzutowań
   set $curr_seq = (unsigned int)curr_used->seq
   if ($curr_seq == 0u)
     continue
@@ -121,7 +112,6 @@ commands
   set $rA = (unsigned int)($seq * 22695477u + 1u)
   set $axis = (int)($rA % 3u)
   
-  # Wskaźnik do wybranej repliki
   set $t = r0
   if ($rep == 1)
     set $t = r1
@@ -172,7 +162,6 @@ commands
   continue
 end
 
-# Hook końcowy
 break end_hook
 commands
   silent
@@ -180,5 +169,4 @@ commands
   continue
 end
 
-# Uruchom
 continue

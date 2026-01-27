@@ -82,8 +82,8 @@ run_baseline
 run_with_seu 0 0 ""
 run_with_seu 1 0 ""
 run_with_seu 2 0 ""
-run_with_seu 1 1 "_sefi"
-run_with_seu 2 2 "_sefi"
+run_with_seu 1 1 "_sift"
+run_with_seu 2 2 "_sift"
 
 echo "[docker] all done. Logs in /work/logs:"
 ls -1 logs || true

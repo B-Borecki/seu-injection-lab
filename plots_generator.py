@@ -6,22 +6,26 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 
 WIN = 1000
-SPIKE_THR = 500
 
 LOGDIR = Path("logs")
 OUTDIR = Path("plots")
 
 HEX8 = re.compile(r"[0-9A-Fa-f]{8}")
-#RE_ACT = re.compile(r"^\[ACT\s+\]")
-RE_ACT = re.compile(
-    r"^\[ACT\s+\]\s+seq=([0-9A-Fa-f]{8})\s+m=\(([0-9A-Fa-f]{8}),([0-9A-Fa-f]{8}),([0-9A-Fa-f]{8})\)\s+sat=([0-9A-Fa-f]{8})"
-)
-
+RE_ACT = re.compile(r"^\[ACT\s+\]\s+seq=([0-9A-Fa-f]{8})\s+m=\(([0-9A-Fa-f]{8}),([0-9A-Fa-f]{8}),([0-9A-Fa-f]{8})\)\s+sat=([0-9A-Fa-f]{8})")
 # [GDB-SEU] seq=50 flip bit=12 flips=3
 RE_GDB = re.compile(r"^\[GDB-SEU\]\s+seq=(\d+)\s+flip\s+bit=(\d+)\s+flips=(\d+)")
-
 # [COST ] protect_mode=00000001 tmr_calls=00004E20 srl_calls=00000000 srl_clamps=00000000
 RE_COST = re.compile(r"^\[COST\s+\]\s+protect_mode=([0-9A-Fa-f]{8})\s+tmr_calls=([0-9A-Fa-f]{8})\s+srl_calls=([0-9A-Fa-f]{8})\s+srl_clamps=([0-9A-Fa-f]{8})")
+
+LINE_STYLES = {
+    "saturation": {
+        "baseline (no SEU)": dict(linestyle="-",  linewidth=2.0),
+        "SEU in prev":       dict(linestyle="-", linewidth=1.6),
+        "SEU in curr":       dict(linestyle="-", linewidth=1.6),
+        "SEU in cmd":        dict(linestyle="--", linewidth=1.8),
+    }
+}
+
 
 def u32(x: int) -> int:
     return x & 0xFFFFFFFF
@@ -52,6 +56,7 @@ class Cost:
     tmr_calls: int
     srl_calls: int
     srl_clamps: int
+
 
 def require(path: Path) -> Path:
     if not path.exists():
@@ -130,34 +135,28 @@ def window_counts(seqs, flags, win):
     ys = [bins[x] for x in xs]
     return xs, ys
 
-def plot_pre_window_all(runs: dict[str, dict[int, Actuator]], kind: str, out_png: Path):
+def plot_saturation_rate(runs: dict[str, dict[int, Actuator]], out_png: Path):
     plt.figure(figsize=(12, 5))
 
     for name, smp in runs.items():
         seqs = sorted(smp.keys())
-        if kind == "sat":
-            flags = [1 if smp[s].sat_flags else 0 for s in seqs]
-            ylabel = f"sat events per window (win={WIN})"
-            title = "Saturation rate per window"
-        else:
-            flags = [1 if smp[s].dm > SPIKE_THR else 0 for s in seqs]
-            ylabel = f"spikes per window (dm>{SPIKE_THR}, win={WIN})"
-            title = "Spike rate per window"
-
+        flags = [1 if smp[s].sat_flags else 0 for s in seqs]
         xs, ys = window_counts(seqs, flags, WIN)
-        plt.plot(xs, ys, label=name)
+        style = LINE_STYLES["saturation"].get(name, {})
+        plt.plot(xs, ys, label=name, **style)
 
     ax = plt.gca()
     ax.xaxis.set_major_locator(MultipleLocator(2000))
 
     plt.xlabel("seq")
-    plt.ylabel(ylabel)
-    plt.title(title)
+    plt.ylabel(f"saturation events per window (win={WIN})")
+    plt.title("Saturation rate per window")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
     plt.savefig(out_png, dpi=160)
     plt.close()
+
 
 def plot_pre_amplitude_all(runs: dict[str, dict[int, Actuator]], flips: dict[str, list[Gdb]], out_png: Path):
     plt.figure(figsize=(16, 5))
@@ -187,40 +186,55 @@ def plot_pre_amplitude_all(runs: dict[str, dict[int, Actuator]], flips: dict[str
     plt.savefig(out_png, dpi=160)
     plt.close()
 
-def plot_curr_window_compare(curr, curr_tmr, kind, out_png: Path):
+def plot_curr_window_compare(curr, curr_tmr, out_png: Path):
     plt.figure(figsize=(12, 5))
 
     def series(label, smp):
         seqs = sorted(smp.keys())
-        if kind == "sat":
-            flags = [1 if smp[s].sat_flags else 0 for s in seqs]
-            ylabel = f"sat events per window (win={WIN})"
-            title = "curr: saturation rate per window (before vs after TMR)"
-        else:
-            flags = [1 if smp[s].dm > SPIKE_THR else 0 for s in seqs]
-            ylabel = f"spikes per window (dm>{SPIKE_THR}, win={WIN})"
-            title = "curr: spike rate per window (before vs after TMR)"
+        flags = [1 if smp[s].sat_flags else 0 for s in seqs]
 
         xs, ys = window_counts(seqs, flags, WIN)
         plt.plot(xs, ys, label=label)
-        return ylabel, title
 
-    ylabel, title = series("curr (without protection)", curr)
+    series("curr (without protection)", curr)
     series("curr + TMR", curr_tmr)
 
     ax = plt.gca()
     ax.xaxis.set_major_locator(MultipleLocator(2000))
 
     plt.xlabel("seq")
-    plt.ylabel(ylabel)
-    plt.title(title)
+    plt.ylabel(f"saturation events per window (win={WIN})")
+    plt.title("curr: saturation rate per window (before vs after TMR)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
     plt.savefig(out_png, dpi=160)
     plt.close()
 
-def plot_cmd_amplitude_compare(baseline, cmd, cmd_srl, flips_cmd, flips_srl, out_png: Path):
+def plot_curr_mismatch_compare(baseline, curr, curr_tmr, out_png: Path):
+    plt.figure(figsize=(12, 5))
+
+    def series(label, smp):
+        xs, ys = mismatch_count_vs_baseline(baseline, smp, WIN)
+        plt.plot(xs, ys, label=label)
+
+    series("curr (without protection)", curr)
+    series("curr + TMR", curr_tmr)
+
+    ax = plt.gca()
+    ax.xaxis.set_major_locator(MultipleLocator(2000))
+
+    plt.xlabel("seq")
+    plt.ylabel(f"mismatch count vs baseline (win={WIN})")
+    plt.title("curr: mismatch vs baseline (before vs after TMR)")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_png, dpi=160)
+    plt.close()
+
+
+def plot_cmd_amplitude_compare(cmd, cmd_srl, flips_cmd, flips_srl, out_png: Path):
     plt.figure(figsize=(12, 5))
 
     def plot_line(label, smp):
@@ -228,7 +242,6 @@ def plot_cmd_amplitude_compare(baseline, cmd, cmd_srl, flips_cmd, flips_srl, out
         ys = [smp[s].amax for s in seqs]
         plt.plot(seqs, ys, label=label, zorder=2)
 
-    plot_line("baseline (no SEU)", baseline)
     plot_line("cmd (without protection)", cmd)
     plot_line("cmd + SRL", cmd_srl)
 
@@ -252,85 +265,73 @@ def plot_cmd_amplitude_compare(baseline, cmd, cmd_srl, flips_cmd, flips_srl, out
     plt.close()
 
 
-def compute_event_rates(samples: dict[int, Actuator]) -> dict[str, float]:
-    seqs = sorted(samples.keys())
-    if not seqs:
-        return {"spike_rate": 0.0, "sat_rate": 0.0}
+def mismatch_count_vs_baseline(baseline, run, win):
+    bins = {}
+    for seq, a in run.items():
+        if seq == 0 or seq not in baseline:
+            continue
+        b = baseline[seq]
+        mismatch = int((a.mx != b.mx) or (a.my != b.my) or (a.mz != b.mz))
+        end = ((seq + win - 1) // win) * win
+        bins[end] = bins.get(end, 0) + mismatch
 
-    n = len(seqs)
-    spike_cnt = 0
-    sat_cnt = 0
+    xs = sorted(bins.keys())
+    ys = [bins[x] for x in xs]
+    return xs, ys
 
-    for s in seqs:
-        a = samples[s]
-        if a.dm > SPIKE_THR:
-            spike_cnt += 1
-        if a.sat_flags != 0:
-            sat_cnt += 1
+def plot_mismatch_count(baseline, runs, out_png):
+    plt.figure(figsize=(12, 5))
+    for name, smp in runs.items():
+        xs, ys = mismatch_count_vs_baseline(baseline, smp, WIN)
+        plt.plot(xs, ys, label=name)
+
+    ax = plt.gca()
+    ax.xaxis.set_major_locator(MultipleLocator(2000))
+
+    plt.xlabel("seq")
+    plt.ylabel(f"mismatch count vs baseline (win={WIN})")
+    plt.title("Mismatch count vs baseline")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_png, dpi=160)
+    plt.close()
+
+
+def compute_cost_metrics(name: str, cost: Cost, n_samples: int, n_seu: int):
+    tmr_rate = cost.tmr_calls / n_samples if n_samples else 0.0
+
+    if cost.srl_calls > 0:
+        srl_clamps_per_call = cost.srl_clamps / cost.srl_calls
+    else:
+        srl_clamps_per_call = 0.0
+
+    if n_seu > 0:
+        srl_clamps_per_seu = cost.srl_clamps / n_seu
+    else:
+        srl_clamps_per_seu = 0.0
 
     return {
-        "spike_rate": spike_cnt / n,
-        "sat_rate": sat_cnt / n,
+        "name": name,
+        "protect_mode": cost.protect_mode,
+        "n_samples": n_samples,
+        "n_seu": n_seu,
+        "tmr_calls": cost.tmr_calls,
+        "srl_calls": cost.srl_calls,
+        "srl_clamps": cost.srl_clamps,
+        "tmr_rate": tmr_rate,
+        "srl_clamps_per_call": srl_clamps_per_call,
+        "srl_clamps_per_seu": srl_clamps_per_seu,
     }
 
+def save_cost_table(metrics: list[dict], out_csv: Path):
+    with out_csv.open("w") as f:
+        f.write("name,protect_mode,N_samples,N_seu,tmr_calls,srl_calls,srl_clamps,tmr_rate,srl_clamps_per_call,srl_clamps_per_seu\n")
+        for m in metrics:
+            f.write(f"{m['name']},{m['protect_mode']},{m['n_samples']},{m['n_seu']},{m['tmr_calls']},{m['srl_calls']},{m['srl_clamps']},{m['tmr_rate']:.6f},{m['srl_clamps_per_call']:.6f},{m['srl_clamps_per_seu']:.6f}\n")
 
-def clamp_rate(cost: Cost) -> float:
-    # SRL działa per oś (3 osie), więc normalizujemy do "ile razy na oś-próbkę"
-    if cost.srl_calls <= 0:
-        return 0.0
-    denom = 3.0 * float(cost.srl_calls)
-    return float(cost.srl_clamps) / denom
-
-
-def plot_costs(costs: dict[str, Cost], out_png: Path):
-    # Sensowny koszt z logów to clamp_rate dla SRL
-    labels = []
-    rates = []
-    for k, c in costs.items():
-        if c.srl_calls > 0:
-            labels.append(k)
-            rates.append(clamp_rate(c))
-
-    if not labels:
-        return
-
-    x = list(range(len(labels)))
-
-    plt.figure(figsize=(10, 4.5))
-    plt.bar(x, rates)
-    plt.xticks(x, labels, rotation=15, ha="right")
-    plt.ylabel("clamp rate = srl_clamps / (3 * srl_calls)")
-    plt.title("SRL: how often protection actually clamps")
-    plt.grid(True, alpha=0.3, axis="y")
-    plt.tight_layout()
-    plt.savefig(out_png, dpi=160)
-    plt.close()
-
-
-
-def plot_benefit_vs_cost(points: list[tuple[str, float, float, float]], out_png: Path):
-    # points: (label, cost_x, spike_drop, sat_drop)
-    if not points:
-        return
-
-    xs = [p[1] for p in points]
-    ys = [0.5 * (p[2] + p[3]) for p in points]
-
-    plt.figure(figsize=(10, 4.5))
-    plt.scatter(xs, ys)
-
-    for label, x, spike_drop, sat_drop in points:
-        y = 0.5 * (spike_drop + sat_drop)
-        plt.annotate(label, (x, y), textcoords="offset points", xytext=(6, 6), fontsize=9)
-
-    plt.xlabel("cost proxy: clamp rate")
-    plt.ylabel("benefit proxy: mean(spike_drop, sat_drop)")
-    plt.title("Benefit vs cost (SRL)")
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(out_png, dpi=160)
-    plt.close()
-
+def n_samples_from_run(run: dict[int, Actuator]) -> int:
+    return max(run.keys()) if run else 0
 
 
 def main():
@@ -341,14 +342,14 @@ def main():
     curr     = parse_act_samples(LOGDIR / "seu_mode1.log")
     cmd      = parse_act_samples(LOGDIR / "seu_mode2.log")
 
-    curr_tmr = parse_act_samples(LOGDIR / "seu_mode1_sefi.log")
-    cmd_srl  = parse_act_samples(LOGDIR / "seu_mode2_sefi.log")
+    curr_tmr = parse_act_samples(LOGDIR / "seu_mode1_sift.log")
+    cmd_srl  = parse_act_samples(LOGDIR / "seu_mode2_sift.log")
 
     flips_prev     = parse_gdb_flips(LOGDIR / "gdb_mode0.log")
     flips_curr     = parse_gdb_flips(LOGDIR / "gdb_mode1.log")
     flips_cmd      = parse_gdb_flips(LOGDIR / "gdb_mode2.log")
-    flips_curr_tmr = parse_gdb_flips(LOGDIR / "gdb_mode1_sefi.log")
-    flips_cmd_srl  = parse_gdb_flips(LOGDIR / "gdb_mode2_sefi.log")
+    flips_curr_tmr = parse_gdb_flips(LOGDIR / "gdb_mode1_sift.log")
+    flips_cmd_srl  = parse_gdb_flips(LOGDIR / "gdb_mode2_sift.log")
 
     pre_runs = {
         "baseline (no SEU)": baseline,
@@ -364,37 +365,35 @@ def main():
     }
 
     plot_pre_amplitude_all(pre_runs, pre_flips, OUTDIR / "pre_amplitude_all.png")
-    plot_pre_window_all(pre_runs, "spike", OUTDIR / "pre_spike_rate_all.png")
-    plot_pre_window_all(pre_runs, "sat",   OUTDIR / "pre_sat_rate_all.png")
+    plot_saturation_rate(pre_runs,   OUTDIR / "pre_sat_rate_all.png")
+    plot_mismatch_count(baseline, {"SEU in prev": prev, "SEU in curr": curr, "SEU in cmd": cmd}, OUTDIR / "mismatch_count_vs_baseline.png")
 
-    plot_curr_window_compare(curr, curr_tmr, "spike", OUTDIR / "curr_spike_rate_compare.png")
-    plot_curr_window_compare(curr, curr_tmr, "sat",   OUTDIR / "curr_sat_rate_compare.png")
-    plot_cmd_amplitude_compare(baseline, cmd, cmd_srl, flips_cmd, flips_cmd_srl, OUTDIR / "cmd_amplitude_compare.png")
+    plot_curr_window_compare(curr, curr_tmr,   OUTDIR / "curr_sat_rate_compare.png")
+    plot_cmd_amplitude_compare(cmd, cmd_srl, flips_cmd, flips_cmd_srl, OUTDIR / "cmd_amplitude_compare.png")
+    plot_curr_mismatch_compare(baseline, curr, curr_tmr, OUTDIR / "curr_mismatch_compare.png")
 
-    # --- costs (better) ---
-    costs = {}
-    c = parse_cost(LOGDIR / "seu_mode2_sefi.log")
-    if c: costs["cmd_srl"] = c
-    c = parse_cost(LOGDIR / "seu_mode1_sefi.log")
-    if c: costs["curr_tmr"] = c  # tu clamp_rate i tak wyjdzie 0 (OK)
-    c = parse_cost(LOGDIR / "seu_none.log")
-    if c: costs["none"] = c      # też 0 (OK)
+    scenarios = [
+        ("none", baseline, LOGDIR / "seu_none.log", []),
+        ("prev", prev, LOGDIR / "seu_mode0.log", flips_prev),
+        ("curr", curr, LOGDIR / "seu_mode1.log", flips_curr),
+        ("cmd", cmd, LOGDIR / "seu_mode2.log", flips_cmd),
+        ("curr_tmr", curr_tmr, LOGDIR / "seu_mode1_sift.log", flips_curr_tmr),
+        ("cmd_srl", cmd_srl,  LOGDIR / "seu_mode2_sift.log", flips_cmd_srl),
+    ]
 
-    # 1) clamp rate barplot (real info only for SRL)
-    plot_costs(costs, OUTDIR / "cost_clamp_rate.png")
+    cost_metrics = []
+    for name, run, cost_log, flips in scenarios:
+        c = parse_cost(cost_log)
+        if not c:
+            continue
 
-    # 2) benefit vs cost scatter (SRL only, bo tylko SRL ma "ingerencję" w logach)
-    points = []
-    if "cmd_srl" in costs:
-        r_before = compute_event_rates(cmd)
-        r_after  = compute_event_rates(cmd_srl)
+        n_samples = n_samples_from_run(run)
+        n_seu = len(flips)
 
-        spike_drop = r_before["spike_rate"] - r_after["spike_rate"]
-        sat_drop   = r_before["sat_rate"]   - r_after["sat_rate"]
+        cost_metrics.append(compute_cost_metrics(name, c, n_samples, n_seu))
 
-        points.append(("cmd_srl", clamp_rate(costs["cmd_srl"]), spike_drop, sat_drop))
-
-    plot_benefit_vs_cost(points, OUTDIR / "benefit_vs_cost.png")
+    if cost_metrics:
+        save_cost_table(cost_metrics, OUTDIR / "cost_metrics.csv")
 
 
 if __name__ == "__main__":
