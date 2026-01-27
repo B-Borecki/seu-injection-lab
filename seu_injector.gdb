@@ -1,9 +1,9 @@
 set pagination off
 set confirm off
 
-set $SEU_MODE = 1
+# Inicjalizacja zmennych
 set $SEU_POW2 = 7
-set $BIT_MAX = 15
+set $BIT_MAX  = 31
 
 target remote :1234
 monitor reset halt
@@ -12,123 +12,167 @@ load
 set $flip_cnt = 0
 
 define maybe_inject
-  set $seq = (unsigned)$arg0
-  set $salt = (unsigned)($SEU_MODE) * 0x9E3779B1
-  set $r = (unsigned)(($seq ^ $salt) * 1103515245 + 12345)
-
-  set $mask = (1u << $SEU_POW2) - 1u
-
-  if (($r & $mask) == 0)
+  # Użyj jawnego rzutowania dla bezpieczeństwa
+  set $seq = (unsigned int)$arg0
+  
+  # Oblicz salt i r
+  set $salt = (unsigned int)($SEU_MODE) * 0x9E3779B1u
+  set $r = (unsigned int)(($seq ^ $salt) * 1103515245u + 12345u)
+  
+  # Oblicz maskę
+  set $mask = (1u << (unsigned int)$SEU_POW2) - 1u
+  
+  # Warunek iniekcji
+  if (($r & $mask) == 0u)
     set $bit = (int)(($r >> 8) & 31u)
-    set $bit = $bit % (int)($BIT_MAX + 1)
-
-    set var $arg1 = (uint32_t)$arg1 ^ (1u << $bit)
-
-    set $flip_cnt = (int)$flip_cnt + 1
-    printf "[GDB-SEU] seq=%u %s flip bit=%d flips=%d\n", $seq, $arg2, $bit, $flip_cnt
+    set $bit = $bit % ((int)$BIT_MAX + 1)
+    
+    # Pobierz aktualną wartość
+    set $current_val = *(uint32_t*)$arg1
+    # Odwróć bit
+    set $new_val = $current_val ^ (1u << $bit)
+    # Zapisz z powrotem
+    set *(uint32_t*)$arg1 = $new_val
+    
+    set $flip_cnt = $flip_cnt + 1
+    printf "[GDB-SEU] seq=%u flip bit=%d flips=%d\n", $seq, $bit, $flip_cnt
   end
 end
 
+# SEU_MODE = 0 => flip prev
 break seu_hook_prev
 commands
   silent
+  # Porównanie z zerem jako unsigned
   if ($SEU_MODE != 0)
     continue
   end
-  if ((unsigned)curr->seq == 0u)
+  
+  # Sprawdzenie seq - użyj jawnych rzutowań
+  set $curr_seq = (unsigned int)curr_used->seq
+  if ($curr_seq == 0u)
     continue
   end
-
-  set $r2 = (unsigned)(curr->seq * 1664525u + 1013904223u)
+  
+  set $seq = $curr_seq
+  set $r2 = (unsigned int)($seq * 1664525u + 1013904223u)
   set $axis = (int)($r2 % 3u)
 
   if ($axis == 0)
-    maybe_inject curr->seq prev->Bx "prev.Bx"
+    maybe_inject $seq &(prev->bx)
   end
   if ($axis == 1)
-    maybe_inject curr->seq prev->By "prev.By"
+    maybe_inject $seq &(prev->by)
   end
   if ($axis == 2)
-    maybe_inject curr->seq prev->Bz "prev.Bz"
+    maybe_inject $seq &(prev->bz)
   end
-
+  
   continue
 end
 
+# SEU_MODE = 1 => flip curr (bez TMR)
+break seu_hook_curr
+commands
+  silent
+  if ($SEU_MODE != 1)
+    continue
+  end
+  
+  set $seq = (unsigned int)curr_used->seq
+  if ($seq == 0u)
+    continue
+  end
+  
+  set $r2 = (unsigned int)($seq * 1664525u + 1013904223u)
+  set $axis = (int)($r2 % 3u)
+
+  if ($axis == 0)
+    maybe_inject $seq &(curr_used->bx)
+  end
+  if ($axis == 1)
+    maybe_inject $seq &(curr_used->by)
+  end
+  if ($axis == 2)
+    maybe_inject $seq &(curr_used->bz)
+  end
+  
+  continue
+end
+
+# SEU_MODE = 1 (TMR) => flip replica
 break seu_hook_curr_tmr
 commands
   silent
   if ($SEU_MODE != 1)
     continue
   end
-
-  set $seq = (unsigned)c0->seq
+  
+  set $seq = (unsigned int)r0->seq
   if ($seq == 0u)
     continue
   end
-
-  set $rR = (unsigned)($seq * 1664525u + 1013904223u)
+  
+  # Wybór repliki
+  set $rR = (unsigned int)($seq * 1664525u + 1013904223u)
   set $rep = (int)($rR % 3u)
-
-  set $rA = (unsigned)($seq * 22695477u + 1u)
+  
+  # Wybór osi
+  set $rA = (unsigned int)($seq * 22695477u + 1u)
   set $axis = (int)($rA % 3u)
-
-  set $t = c0
+  
+  # Wskaźnik do wybranej repliki
+  set $t = r0
   if ($rep == 1)
-    set $t = c1
+    set $t = r1
   end
   if ($rep == 2)
-    set $t = c2
+    set $t = r2
   end
-
-  set $tag = "r0"
-  if ($rep == 1)
-    set $tag = "r1"
-  end
-  if ($rep == 2)
-    set $tag = "r2"
-  end
-
+  
   if ($axis == 0)
-    maybe_inject $seq $t->Bx $tag
+    maybe_inject $seq &($t->bx)
   end
   if ($axis == 1)
-    maybe_inject $seq $t->By $tag
+    maybe_inject $seq &($t->by)
   end
   if ($axis == 2)
-    maybe_inject $seq $t->Bz $tag
+    maybe_inject $seq &($t->bz)
   end
-
+  
   continue
 end
 
+# SEU_MODE = 2 => flip cmd
 break seu_hook_cmd
 commands
   silent
   if ($SEU_MODE != 2)
     continue
   end
-  if ((unsigned)cmd->seq == 0u)
+  
+  set $seq = (unsigned int)cmd->seq
+  if ($seq == 0u)
     continue
   end
-
-  set $r2 = (unsigned)(cmd->seq * 1103515245u + 12345u)
+  
+  set $r2 = (unsigned int)($seq * 1103515245u + 12345u)
   set $axis = (int)($r2 % 3u)
 
   if ($axis == 0)
-    maybe_inject cmd->seq cmd->mx "cmd.mx"
+    maybe_inject $seq &(cmd->mx)
   end
   if ($axis == 1)
-    maybe_inject cmd->seq cmd->my "cmd.my"
+    maybe_inject $seq &(cmd->my)
   end
   if ($axis == 2)
-    maybe_inject cmd->seq cmd->mz "cmd.mz"
+    maybe_inject $seq &(cmd->mz)
   end
-
+  
   continue
 end
 
-
+# Hook końcowy
 break end_hook
 commands
   silent
@@ -136,4 +180,5 @@ commands
   continue
 end
 
+# Uruchom
 continue
