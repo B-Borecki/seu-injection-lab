@@ -1,0 +1,199 @@
+gdb-multiarch firmware.elf -ex 'set $SEU_MODE=1' -x seu_injector.gdb
+GNU gdb (Debian 13.1-3) 13.1
+Copyright (C) 2023 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+Type "show copying" and "show warranty" for details.
+This GDB was configured as "x86_64-linux-gnu".
+Type "show configuration" for configuration details.
+For bug reporting instructions, please see:
+<https://www.gnu.org/software/gdb/bugs/>.
+Find the GDB manual and other documentation resources online at:
+    <http://www.gnu.org/software/gdb/documentation/>.
+
+For help, type "help".
+Type "apropos word" to search for commands related to "word"...
+Reading symbols from firmware.elf...
+Reset_Handler () at startup.c:47
+47	void Reset_Handler(void) {
+unknown command: 'reset'
+Loading section .text, size 0x3444 lma 0x0
+Loading section .ARM.exidx, size 0x8 lma 0x3444
+Loading section .data, size 0x8 lma 0x344c
+Start address 0x000000a0, load size 13396
+Transfer rate: 13082 KB/sec, 1488 bytes/write.
+Breakpoint 1 at 0xbe: file main.c, line 61.
+Breakpoint 2 at 0xd0: file main.c, line 66.
+Breakpoint 3 at 0xe6: file main.c, line 71.
+Breakpoint 4 at 0xf8: file main.c, line 76.
+Breakpoint 5 at 0x106: file main.c, line 79.
+[GDB-SEU] seq=50 flip bit=23 flips=1
+[GDB-SEU] seq=178 flip bit=0 flips=2
+[GDB-SEU] seq=306 flip bit=10 flips=3
+[GDB-SEU] seq=434 flip bit=19 flips=4
+[GDB-SEU] seq=562 flip bit=17 flips=5
+[GDB-SEU] seq=690 flip bit=26 flips=6
+[GDB-SEU] seq=818 flip bit=4 flips=7
+[GDB-SEU] seq=946 flip bit=13 flips=8
+[GDB-SEU] seq=1074 flip bit=11 flips=9
+[GDB-SEU] seq=1202 flip bit=20 flips=10
+[GDB-SEU] seq=1330 flip bit=30 flips=11
+[GDB-SEU] seq=1458 flip bit=7 flips=12
+[GDB-SEU] seq=1586 flip bit=5 flips=13
+[GDB-SEU] seq=1714 flip bit=14 flips=14
+[GDB-SEU] seq=1842 flip bit=24 flips=15
+[GDB-SEU] seq=1970 flip bit=1 flips=16
+[GDB-SEU] seq=2098 flip bit=15 flips=17
+[GDB-SEU] seq=2226 flip bit=24 flips=18
+[GDB-SEU] seq=2354 flip bit=2 flips=19
+[GDB-SEU] seq=2482 flip bit=11 flips=20
+[GDB-SEU] seq=2610 flip bit=9 flips=21
+[GDB-SEU] seq=2738 flip bit=18 flips=22
+[GDB-SEU] seq=2866 flip bit=28 flips=23
+[GDB-SEU] seq=2994 flip bit=5 flips=24
+[GDB-SEU] seq=3122 flip bit=3 flips=25
+[GDB-SEU] seq=3250 flip bit=12 flips=26
+[GDB-SEU] seq=3378 flip bit=22 flips=27
+[GDB-SEU] seq=3506 flip bit=31 flips=28
+[GDB-SEU] seq=3634 flip bit=29 flips=29
+[GDB-SEU] seq=3762 flip bit=6 flips=30
+[GDB-SEU] seq=3890 flip bit=16 flips=31
+[GDB-SEU] seq=4018 flip bit=25 flips=32
+[GDB-SEU] seq=4146 flip bit=7 flips=33
+[GDB-SEU] seq=4274 flip bit=16 flips=34
+[GDB-SEU] seq=4402 flip bit=26 flips=35
+[GDB-SEU] seq=4530 flip bit=3 flips=36
+[GDB-SEU] seq=4658 flip bit=1 flips=37
+[GDB-SEU] seq=4786 flip bit=10 flips=38
+[GDB-SEU] seq=4914 flip bit=20 flips=39
+[GDB-SEU] seq=5042 flip bit=29 flips=40
+[GDB-SEU] seq=5170 flip bit=27 flips=41
+[GDB-SEU] seq=5298 flip bit=4 flips=42
+[GDB-SEU] seq=5426 flip bit=14 flips=43
+[GDB-SEU] seq=5554 flip bit=23 flips=44
+[GDB-SEU] seq=5682 flip bit=21 flips=45
+[GDB-SEU] seq=5810 flip bit=30 flips=46
+[GDB-SEU] seq=5938 flip bit=8 flips=47
+[GDB-SEU] seq=6066 flip bit=17 flips=48
+[GDB-SEU] seq=6194 flip bit=31 flips=49
+[GDB-SEU] seq=6322 flip bit=8 flips=50
+[GDB-SEU] seq=6450 flip bit=18 flips=51
+[GDB-SEU] seq=6578 flip bit=27 flips=52
+[GDB-SEU] seq=6706 flip bit=25 flips=53
+[GDB-SEU] seq=6834 flip bit=2 flips=54
+[GDB-SEU] seq=6962 flip bit=12 flips=55
+[GDB-SEU] seq=7090 flip bit=21 flips=56
+[GDB-SEU] seq=7218 flip bit=19 flips=57
+[GDB-SEU] seq=7346 flip bit=28 flips=58
+[GDB-SEU] seq=7474 flip bit=6 flips=59
+[GDB-SEU] seq=7602 flip bit=15 flips=60
+[GDB-SEU] seq=7730 flip bit=13 flips=61
+[GDB-SEU] seq=7858 flip bit=22 flips=62
+[GDB-SEU] seq=7986 flip bit=0 flips=63
+[GDB-SEU] seq=8114 flip bit=9 flips=64
+[GDB-SEU] seq=8242 flip bit=23 flips=65
+[GDB-SEU] seq=8370 flip bit=0 flips=66
+[GDB-SEU] seq=8498 flip bit=10 flips=67
+[GDB-SEU] seq=8626 flip bit=19 flips=68
+[GDB-SEU] seq=8754 flip bit=17 flips=69
+[GDB-SEU] seq=8882 flip bit=26 flips=70
+[GDB-SEU] seq=9010 flip bit=4 flips=71
+[GDB-SEU] seq=9138 flip bit=13 flips=72
+[GDB-SEU] seq=9266 flip bit=11 flips=73
+[GDB-SEU] seq=9394 flip bit=20 flips=74
+[GDB-SEU] seq=9522 flip bit=30 flips=75
+[GDB-SEU] seq=9650 flip bit=7 flips=76
+[GDB-SEU] seq=9778 flip bit=5 flips=77
+[GDB-SEU] seq=9906 flip bit=14 flips=78
+[GDB-SEU] seq=10034 flip bit=24 flips=79
+[GDB-SEU] seq=10162 flip bit=1 flips=80
+[GDB-SEU] seq=10290 flip bit=15 flips=81
+[GDB-SEU] seq=10418 flip bit=24 flips=82
+[GDB-SEU] seq=10546 flip bit=2 flips=83
+[GDB-SEU] seq=10674 flip bit=11 flips=84
+[GDB-SEU] seq=10802 flip bit=9 flips=85
+[GDB-SEU] seq=10930 flip bit=18 flips=86
+[GDB-SEU] seq=11058 flip bit=28 flips=87
+[GDB-SEU] seq=11186 flip bit=5 flips=88
+[GDB-SEU] seq=11314 flip bit=3 flips=89
+[GDB-SEU] seq=11442 flip bit=12 flips=90
+[GDB-SEU] seq=11570 flip bit=22 flips=91
+[GDB-SEU] seq=11698 flip bit=31 flips=92
+[GDB-SEU] seq=11826 flip bit=29 flips=93
+[GDB-SEU] seq=11954 flip bit=6 flips=94
+[GDB-SEU] seq=12082 flip bit=16 flips=95
+[GDB-SEU] seq=12210 flip bit=25 flips=96
+[GDB-SEU] seq=12338 flip bit=7 flips=97
+[GDB-SEU] seq=12466 flip bit=16 flips=98
+[GDB-SEU] seq=12594 flip bit=26 flips=99
+[GDB-SEU] seq=12722 flip bit=3 flips=100
+[GDB-SEU] seq=12850 flip bit=1 flips=101
+[GDB-SEU] seq=12978 flip bit=10 flips=102
+[GDB-SEU] seq=13106 flip bit=20 flips=103
+[GDB-SEU] seq=13234 flip bit=29 flips=104
+[GDB-SEU] seq=13362 flip bit=27 flips=105
+[GDB-SEU] seq=13362 flip bit=27 flips=106
+[GDB-SEU] seq=13490 flip bit=4 flips=107
+[GDB-SEU] seq=13618 flip bit=14 flips=108
+[GDB-SEU] seq=13746 flip bit=23 flips=109
+[GDB-SEU] seq=13874 flip bit=21 flips=110
+[GDB-SEU] seq=14002 flip bit=30 flips=111
+[GDB-SEU] seq=14002 flip bit=30 flips=112
+[GDB-SEU] seq=14130 flip bit=8 flips=113
+[GDB-SEU] seq=14258 flip bit=17 flips=114
+[GDB-SEU] seq=14386 flip bit=31 flips=115
+[GDB-SEU] seq=14514 flip bit=8 flips=116
+[GDB-SEU] seq=14642 flip bit=18 flips=117
+[GDB-SEU] seq=14770 flip bit=27 flips=118
+[GDB-SEU] seq=14898 flip bit=25 flips=119
+[GDB-SEU] seq=15026 flip bit=2 flips=120
+[GDB-SEU] seq=15154 flip bit=12 flips=121
+[GDB-SEU] seq=15282 flip bit=21 flips=122
+[GDB-SEU] seq=15410 flip bit=19 flips=123
+[GDB-SEU] seq=15538 flip bit=28 flips=124
+[GDB-SEU] seq=15666 flip bit=6 flips=125
+[GDB-SEU] seq=15794 flip bit=15 flips=126
+[GDB-SEU] seq=15922 flip bit=13 flips=127
+[GDB-SEU] seq=16050 flip bit=22 flips=128
+[GDB-SEU] seq=16178 flip bit=0 flips=129
+[GDB-SEU] seq=16306 flip bit=9 flips=130
+[GDB-SEU] seq=16434 flip bit=23 flips=131
+[GDB-SEU] seq=16562 flip bit=0 flips=132
+[GDB-SEU] seq=16690 flip bit=10 flips=133
+[GDB-SEU] seq=16818 flip bit=19 flips=134
+[GDB-SEU] seq=16946 flip bit=17 flips=135
+[GDB-SEU] seq=17074 flip bit=26 flips=136
+[GDB-SEU] seq=17202 flip bit=4 flips=137
+[GDB-SEU] seq=17330 flip bit=13 flips=138
+[GDB-SEU] seq=17458 flip bit=11 flips=139
+[GDB-SEU] seq=17586 flip bit=20 flips=140
+[GDB-SEU] seq=17714 flip bit=30 flips=141
+[GDB-SEU] seq=17842 flip bit=7 flips=142
+[GDB-SEU] seq=17970 flip bit=5 flips=143
+[GDB-SEU] seq=18098 flip bit=14 flips=144
+[GDB-SEU] seq=18226 flip bit=24 flips=145
+[GDB-SEU] seq=18354 flip bit=1 flips=146
+[GDB-SEU] seq=18482 flip bit=15 flips=147
+[GDB-SEU] seq=18610 flip bit=24 flips=148
+[GDB-SEU] seq=18738 flip bit=2 flips=149
+[GDB-SEU] seq=18866 flip bit=11 flips=150
+[GDB-SEU] seq=18994 flip bit=9 flips=151
+[GDB-SEU] seq=19122 flip bit=18 flips=152
+[GDB-SEU] seq=19250 flip bit=28 flips=153
+[GDB-SEU] seq=19378 flip bit=5 flips=154
+[GDB-SEU] seq=19506 flip bit=3 flips=155
+[GDB-SEU] seq=19634 flip bit=12 flips=156
+[GDB-SEU] seq=19762 flip bit=22 flips=157
+[GDB-SEU] seq=19890 flip bit=31 flips=158
+
+[GDB] SEU_MODE=1 flips=158
+Cannot execute this command while the target is running.
+Use the "interrupt" command to stop the target
+and then try again.
+Exception ignored in: <gdb._GdbFile object at 0x7f07607de090>
+Traceback (most recent call last):
+  File "/usr/share/gdb/python/gdb/__init__.py", line 56, in flush
+    def flush(self):
+
+KeyboardInterrupt: 

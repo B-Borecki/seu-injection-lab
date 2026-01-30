@@ -1,7 +1,8 @@
 TARGET   := firmware
 CC       := arm-none-eabi-gcc
 QEMU     := qemu-system-arm
-GDB      := gdb-multiarch
+GDB      := arm-none-eabi-gdb
+#GDB      := gdb-multiarch
 
 FREERTOS := FreeRTOS/Source
 PORTDIR  := $(FREERTOS)/portable/GCC/ARM_CM3

@@ -17,19 +17,23 @@ OUTDIR = Path("plots")
 # Dopasowanie pojedynczej liczby w hex (8 znaków)
 HEX8 = re.compile(r"[0-9A-Fa-f]{8}")
 # [ACT  ] seq=........ m=(........,........,........) sat=........
-RE_ACT = re.compile(r"^\[ACT\s+\]\s+seq=([0-9A-Fa-f]{8})\s+m=\(([0-9A-Fa-f]{8}),([0-9A-Fa-f]{8}),([0-9A-Fa-f]{8})\)\s+sat=([0-9A-Fa-f]{8})")
+RE_ACT = re.compile(
+    r"^\[ACT\s+\]\s+seq=([0-9A-Fa-f]{8})\s+m=\(([0-9A-Fa-f]{8}),([0-9A-Fa-f]{8}),([0-9A-Fa-f]{8})\)\s+sat=([0-9A-Fa-f]{8})"
+)
 # [GDB-SEU] seq=50 flip bit=12 flips=3
 RE_GDB = re.compile(r"^\[GDB-SEU\]\s+seq=(\d+)\s+flip\s+bit=(\d+)\s+flips=(\d+)")
 # [COST ] protect_mode=........ tmr_calls=........ srl_calls=........ srl_clamps=........
-RE_COST = re.compile(r"^\[COST\s+\]\s+protect_mode=([0-9A-Fa-f]{8})\s+tmr_calls=([0-9A-Fa-f]{8})\s+srl_calls=([0-9A-Fa-f]{8})\s+srl_clamps=([0-9A-Fa-f]{8})")
+RE_COST = re.compile(
+    r"^\[COST\s+\]\s+protect_mode=([0-9A-Fa-f]{8})\s+tmr_calls=([0-9A-Fa-f]{8})\s+srl_calls=([0-9A-Fa-f]{8})\s+srl_clamps=([0-9A-Fa-f]{8})"
+)
 
 # Style linii dla wykresu saturacji
 LINE_STYLES = {
     "saturation": {
-        "baseline (no SEU)": dict(linestyle="-",  linewidth=2.0),
-        "SEU in prev":       dict(linestyle="-", linewidth=1.6),
-        "SEU in curr":       dict(linestyle="-", linewidth=1.6),
-        "SEU in cmd":        dict(linestyle="--", linewidth=1.8),
+        "baseline (no SEU)": dict(linestyle="-", linewidth=2.0),
+        "SEU in input_prev": dict(linestyle="-", linewidth=1.6),
+        "SEU in input_curr": dict(linestyle="-", linewidth=1.6),
+        "SEU in output_cmd": dict(linestyle="--", linewidth=1.8),
     }
 }
 
@@ -120,7 +124,8 @@ def parse_cost(path: Path) -> Cost | None:
                 protect_mode=int(m.group(1), 16),
                 tmr_calls=int(m.group(2), 16),
                 srl_calls=int(m.group(3), 16),
-                srl_clamps=int(m.group(4), 16))
+                srl_clamps=int(m.group(4), 16),
+            )
     return None
 
 # Policz liczbę zdarzeń (np. saturacji) w oknach długości win
@@ -165,15 +170,17 @@ def plot_saturation_rate(runs: dict[str, dict[int, Actuator]], out_png: Path):
 # Wykres: amplituda A(seq) dla wszystkich scenariuszy + znaczniki flipów z GDB
 def plot_pre_amplitude_all(runs: dict[str, dict[int, Actuator]], flips: dict[str, list[Gdb]], out_png: Path):
     plt.figure(figsize=(16, 5))
-    
+
     for name, smp in runs.items():
         seqs = sorted(smp.keys())
         ys = [smp[s].amax for s in seqs]
         plt.plot(seqs, ys, label=name, zorder=2)
+
     # Skala logarytmiczna
     plt.ylim(8, None)
     ax = plt.gca()
     ax.set_yscale("log")
+
     # Pionowe linie w miejscach, gdzie GDB wstrzyknął flip
     ymin, ymax = plt.ylim()
     for fs in flips.values():
@@ -201,15 +208,15 @@ def plot_curr_window_compare(curr, curr_tmr, out_png: Path):
         xs, ys = window_counts(seqs, flags, WIN)
         plt.plot(xs, ys, label=label)
 
-    series("curr (without protection)", curr)
-    series("curr + TMR", curr_tmr)
+    series("input_curr (without protection)", curr)
+    series("input_curr + TMR", curr_tmr)
 
     ax = plt.gca()
     ax.xaxis.set_major_locator(MultipleLocator(2000))
 
     plt.xlabel("seq")
     plt.ylabel(f"saturation events per window (win={WIN})")
-    plt.title("curr: saturation rate per window (before vs after TMR)")
+    plt.title("input_curr: saturation rate per window (before vs after TMR)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
@@ -224,15 +231,15 @@ def plot_curr_mismatch_compare(baseline, curr, curr_tmr, out_png: Path):
         xs, ys = mismatch_count_vs_baseline(baseline, smp, WIN)
         plt.plot(xs, ys, label=label)
 
-    series("curr (without protection)", curr)
-    series("curr + TMR", curr_tmr)
+    series("input_curr (without protection)", curr)
+    series("input_curr + TMR", curr_tmr)
 
     ax = plt.gca()
     ax.xaxis.set_major_locator(MultipleLocator(2000))
 
     plt.xlabel("seq")
     plt.ylabel(f"mismatch count vs baseline (win={WIN})")
-    plt.title("curr: mismatch vs baseline (before vs after TMR)")
+    plt.title("input_curr: mismatch vs baseline (before vs after TMR)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
@@ -264,7 +271,7 @@ def plot_cmd_amplitude_compare(cmd, cmd_srl, flips_cmd, flips_srl, out_png: Path
 
     plt.xlabel("seq")
     plt.ylabel("A(seq)=max(|mx|,|my|,|mz|)")
-    plt.title("cmd: control amplitude (before vs after SRL)")
+    plt.title("output_cmd: control amplitude (before vs after SRL)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
@@ -331,7 +338,8 @@ def compute_cost_metrics(name: str, cost: Cost, n_samples: int, n_seu: int):
         "srl_clamps": cost.srl_clamps,
         "tmr_rate": tmr_rate,
         "srl_clamps_per_call": srl_clamps_per_call,
-        "srl_clamps_per_seu": srl_clamps_per_seu}
+        "srl_clamps_per_seu": srl_clamps_per_seu,
+    }
 
 # Zapisz tabelkę CSV z metrykami kosztu ochrony
 def save_cost_table(metrics: list[dict], out_csv: Path):
@@ -348,52 +356,67 @@ def n_samples_from_run(run: dict[int, Actuator]) -> int:
 def main():
     # Utwórz katalog na wyjście
     OUTDIR.mkdir(exist_ok=True)
+
     # Wczytaj przebiegi: baseline oraz SEU w różnych miejscach
     baseline = parse_act_samples(LOGDIR / "seu_none.log")
-    prev     = parse_act_samples(LOGDIR / "seu_mode0.log")
-    curr     = parse_act_samples(LOGDIR / "seu_mode1.log")
-    cmd      = parse_act_samples(LOGDIR / "seu_mode2.log")
+    prev = parse_act_samples(LOGDIR / "seu_mode0.log")
+    curr = parse_act_samples(LOGDIR / "seu_mode1.log")
+    cmd = parse_act_samples(LOGDIR / "seu_mode2.log")
+
     # Wczytaj przebiegi z ochroną SIFT (TMR dla curr, SRL dla cmd)
     curr_tmr = parse_act_samples(LOGDIR / "seu_mode1_sift.log")
-    cmd_srl  = parse_act_samples(LOGDIR / "seu_mode2_sift.log")
+    cmd_srl = parse_act_samples(LOGDIR / "seu_mode2_sift.log")
+
     # Wczytaj logi z flipami z GDB
-    flips_prev     = parse_gdb_flips(LOGDIR / "gdb_mode0.log")
-    flips_curr     = parse_gdb_flips(LOGDIR / "gdb_mode1.log")
-    flips_cmd      = parse_gdb_flips(LOGDIR / "gdb_mode2.log")
+    flips_prev = parse_gdb_flips(LOGDIR / "gdb_mode0.log")
+    flips_curr = parse_gdb_flips(LOGDIR / "gdb_mode1.log")
+    flips_cmd = parse_gdb_flips(LOGDIR / "gdb_mode2.log")
     flips_curr_tmr = parse_gdb_flips(LOGDIR / "gdb_mode1_sift.log")
-    flips_cmd_srl  = parse_gdb_flips(LOGDIR / "gdb_mode2_sift.log")
+    flips_cmd_srl = parse_gdb_flips(LOGDIR / "gdb_mode2_sift.log")
+
     # Zestaw przebiegów przed ochroną do wspólnych wykresów
     pre_runs = {
         "baseline (no SEU)": baseline,
-        "SEU in prev": prev,
-        "SEU in curr": curr,
-        "SEU in cmd": cmd,
+        "SEU in input_prev": prev,
+        "SEU in input_curr": curr,
+        "SEU in output_cmd": cmd,
     }
 
     # Flipy do wykresu amplitudy przed ochroną
     pre_flips = {
-        "prev": flips_prev,
-        "curr": flips_curr,
+        "input_prev": flips_prev,
+        "input_curr": flips_curr,
         "cmd": flips_cmd,
     }
 
     # Wykresy: amplituda, saturacje i mismatch vs baseline
     plot_pre_amplitude_all(pre_runs, pre_flips, OUTDIR / "pre_amplitude_all.png")
-    plot_saturation_rate(pre_runs,   OUTDIR / "pre_sat_rate_all.png")
-    plot_mismatch_count(baseline, {"SEU in prev": prev, "SEU in curr": curr, "SEU in cmd": cmd}, OUTDIR / "mismatch_count_vs_baseline.png")
+    plot_saturation_rate(pre_runs, OUTDIR / "pre_sat_rate_all.png")
+    plot_mismatch_count(
+        baseline,
+        {
+            "SEU in input_prev": prev,
+            "SEU in input_curr": curr,
+            "SEU in output_cmd": cmd,
+        },
+        OUTDIR / "mismatch_count_vs_baseline.png",
+    )
+
     # Wykresy porównawcze: efekt TMR i efekt SRL
-    plot_curr_window_compare(curr, curr_tmr,   OUTDIR / "curr_sat_rate_compare.png")
+    plot_curr_window_compare(curr, curr_tmr, OUTDIR / "curr_sat_rate_compare.png")
     plot_cmd_amplitude_compare(cmd, cmd_srl, flips_cmd, flips_cmd_srl, OUTDIR / "cmd_amplitude_compare.png")
     plot_curr_mismatch_compare(baseline, curr, curr_tmr, OUTDIR / "curr_mismatch_compare.png")
-    # Scenariusze do tabeli kosztu 
+
+    # Scenariusze do tabeli kosztu
     scenarios = [
         ("none", baseline, LOGDIR / "seu_none.log", []),
-        ("prev", prev, LOGDIR / "seu_mode0.log", flips_prev),
-        ("curr", curr, LOGDIR / "seu_mode1.log", flips_curr),
+        ("input_prev", prev, LOGDIR / "seu_mode0.log", flips_prev),
+        ("input_curr", curr, LOGDIR / "seu_mode1.log", flips_curr),
         ("cmd", cmd, LOGDIR / "seu_mode2.log", flips_cmd),
-        ("curr_tmr", curr_tmr, LOGDIR / "seu_mode1_sift.log", flips_curr_tmr),
-        ("cmd_srl", cmd_srl,  LOGDIR / "seu_mode2_sift.log", flips_cmd_srl),
+        ("input_curr_tmr", curr_tmr, LOGDIR / "seu_mode1_sift.log", flips_curr_tmr),
+        ("cmd_srl", cmd_srl, LOGDIR / "seu_mode2_sift.log", flips_cmd_srl),
     ]
+
     # Policz metryki kosztu dla scenariuszy, które mają wpis [COST]
     cost_metrics = []
     for name, run, cost_log, flips in scenarios:

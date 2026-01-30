@@ -10,8 +10,8 @@
 /*
  *  PROTECT_MODE:
  *    0 = no protection (baseline)
- *    1 = TMR (curr)
- *    2 = slew-rate limiting (cmd)
+ *    1 = TMR (input_curr)
+ *    2 = slew-rate limiting (output_cmd)
  *    3 = both (TMR + SRL)
  */
 // Jeśli nie podano PROTECT_MODE w kompilacji, ustaw domyślnie baseline
@@ -47,14 +47,13 @@ typedef struct {
   int32_t  mx;
   int32_t  my;
   int32_t  mz;
-// bity: 0=X, 1=Y, 2=Z (czy dana oś weszła w saturację)
-  uint32_t sat_flags;
-} coil_cmd_t;
+  uint32_t sat_flags; // bity: 0=X, 1=Y, 2=Z (czy dana oś weszła w saturację)
+} coil_output_cmd_t;
 
 // Kolejka: sensor -> controller
 static QueueHandle_t q_mag_samples;
 // Kolejka: controller -> actuator
-static QueueHandle_t q_cmds;
+static QueueHandle_t q_output_cmds;
 
 // Liczniki kosztu/aktywności mechanizmów ochrony
 static volatile uint32_t g_tmr_calls   = 0;
@@ -63,24 +62,24 @@ static volatile uint32_t g_srl_clamps  = 0;
 
 // Hooki do GDB: punkty wstrzykiwania SEU w dane
 __attribute__((noinline))
-void seu_hook_prev(volatile mag_sample_t *prev, volatile mag_sample_t *curr_used) {
-  (void)prev;
-  (void)curr_used;
+void seu_hook_input_prev(volatile mag_sample_t *input_prev, volatile mag_sample_t *input_curr_used) {
+  (void)input_prev;
+  (void)input_curr_used;
 }
 
 __attribute__((noinline))
-void seu_hook_curr(volatile mag_sample_t *curr_used) {
-  (void)curr_used;
+void seu_hook_input_curr(volatile mag_sample_t *input_curr_used) {
+  (void)input_curr_used;
 }
 
 __attribute__((noinline))
-void seu_hook_curr_tmr(volatile mag_sample_t *r0, volatile mag_sample_t *r1, volatile mag_sample_t *r2) {
+void seu_hook_input_curr_tmr(volatile mag_sample_t *r0, volatile mag_sample_t *r1, volatile mag_sample_t *r2) {
   (void)r0; (void)r1; (void)r2;
 }
 
 __attribute__((noinline))
-void seu_hook_cmd(volatile coil_cmd_t *cmd) {
-  (void)cmd;
+void seu_hook_output_cmd(volatile coil_output_cmd_t *output_cmd) {
+  (void)output_cmd;
 }
 
 // Hook końca eksperymentu
@@ -117,7 +116,7 @@ static uint32_t u32_abs_i32(int32_t x) {
   return (x < 0) ? (uint32_t)(~ux + 1u) : (uint32_t)ux;
 }
 
-// SRL: ogranicz zmianę x względem prev do +-max_step, ustaw did_clamp gdy ograniczono
+// SRL: ogranicz zmianę x względem input_prev do +-max_step, ustaw did_clamp gdy ograniczono
 static inline int32_t limit_step(int32_t x, int32_t prev, int32_t max_step, uint32_t *did_clamp) {
   int32_t d = x - prev;
   if (d >  max_step) { *did_clamp = 1u; return prev + max_step; }
@@ -167,44 +166,44 @@ static void task_sensor(void *arg) {
 static void task_controller(void *arg) {
   (void)arg;
 
-  mag_sample_t prev;
-  mag_sample_t curr;
+  mag_sample_t input_prev;
+  mag_sample_t input_curr;
 
-  // Pobierz pierwszą próbkę, żeby zainicjalizować prev
-  if (xQueueReceive(q_mag_samples, &curr, portMAX_DELAY) == pdPASS) {
-    prev = curr;
+  // Pobierz pierwszą próbkę, żeby zainicjalizować input_prev
+  if (xQueueReceive(q_mag_samples, &input_curr, portMAX_DELAY) == pdPASS) {
+    input_prev = input_curr;
   }
 
   for (;;) {
     // Czekaj na kolejną próbkę sensora
-    if (xQueueReceive(q_mag_samples, &curr, portMAX_DELAY) != pdPASS) {
+    if (xQueueReceive(q_mag_samples, &input_curr, portMAX_DELAY) != pdPASS) {
       continue;
     }
 
-    // "used" to próbka, która faktycznie wchodzi do obliczeń (tu wstrzykujemy SEU)
-    mag_sample_t used = curr;
+    // input_curr_used to próbka, która faktycznie wchodzi do obliczeń (tu wstrzykujemy SEU)
+    mag_sample_t input_curr_used = input_curr;
 
 #if PROTECT_TMR_EN
     // TMR: utwórz 3 repliki bieżącej próbki (SEU może uszkodzić jedną)
-    mag_sample_t r0 = curr, r1 = curr, r2 = curr;
+    mag_sample_t r0 = input_curr, r1 = input_curr, r2 = input_curr;
     // Zlicz wywołania TMR (koszt mechanizmu)
     g_tmr_calls++;
     // Hook: wstrzyknięcie SEU w jedną z replik (kontrolowane z GDB)
-    seu_hook_curr_tmr(&r0, &r1, &r2);
+    seu_hook_input_curr_tmr(&r0, &r1, &r2);
     // Złóż próbkę "used" przez głosowanie większościowe
-    used.bx = tmr_vote_i32(r0.bx, r1.bx, r2.bx);
-    used.by = tmr_vote_i32(r0.by, r1.by, r2.by);
-    used.bz = tmr_vote_i32(r0.bz, r1.bz, r2.bz);
+    input_curr_used.bx = tmr_vote_i32(r0.bx, r1.bx, r2.bx);
+    input_curr_used.by = tmr_vote_i32(r0.by, r1.by, r2.by);
+    input_curr_used.bz = tmr_vote_i32(r0.bz, r1.bz, r2.bz);
 #else
     // Bez ochrony: SEU bezpośrednio w próbce używanej do obliczeń
-    seu_hook_curr(&used);
+    seu_hook_input_curr(&input_curr_used);
 #endif
-    // Hook: możliwość wstrzyknięcia błędu w "prev" albo "used" przed różniczkowaniem
-    seu_hook_prev(&prev, &used);
+    // Hook: możliwość wstrzyknięcia błędu w input_prev albo input_curr_used przed różniczkowaniem
+    seu_hook_input_prev(&input_prev, &input_curr_used);
     // Różnica pola: dB = B(seq) - B(seq-1)
-    const int32_t dBx = used.bx - prev.bx;
-    const int32_t dBy = used.by - prev.by;
-    const int32_t dBz = used.bz - prev.bz;
+    const int32_t dBx = input_curr_used.bx - input_prev.bx;
+    const int32_t dBy = input_curr_used.by - input_prev.by;
+    const int32_t dBz = input_curr_used.bz - input_prev.bz;
     // Prosta kontrola: m = -K * dB
     int32_t mx = -(int32_t)K * dBx;
     int32_t my = -(int32_t)K * dBy;
@@ -219,15 +218,15 @@ static void task_controller(void *arg) {
     if (mz < -CMD_M_MAX) { mz = -CMD_M_MAX; sat |= 4u; }
 
     // Zbuduj komendę dla aktuatora
-    coil_cmd_t cmd = {
-      .seq = curr.seq,
+    coil_output_cmd_t output_cmd = {
+      .seq = input_curr.seq,
       .mx = mx, .my = my, .mz = mz,
       .sat_flags = sat
     };
     // Wyślij komendę do aktuatora
-    (void)xQueueSend(q_cmds, &cmd, 0);
+    (void)xQueueSend(q_output_cmds, &output_cmd, 0);
 
-    prev = used;
+    input_prev = input_curr_used;
   }
 }
 
@@ -235,7 +234,7 @@ static void task_controller(void *arg) {
 static void task_actuator(void *arg) {
   (void)arg;
 
-  coil_cmd_t cmd;
+  coil_output_cmd_t output_cmd;
 
   // Ile razy wystąpiła saturacja
   uint32_t sat_total = 0;
@@ -246,12 +245,12 @@ static void task_actuator(void *arg) {
 
   for (;;) {
     // Czekaj na komendę z kontrolera
-    if (xQueueReceive(q_cmds, &cmd, portMAX_DELAY) != pdPASS) {
+    if (xQueueReceive(q_output_cmds, &output_cmd, portMAX_DELAY) != pdPASS) {
       continue;
     }
 
     // Warunek końca eksperymentu
-    if (cmd.seq >= MAX_SEQ) {
+    if (output_cmd.seq >= MAX_SEQ) {
       end_hook();
 
       // Wypisz liczniki kosztu ochrony
@@ -271,7 +270,7 @@ static void task_actuator(void *arg) {
     }
 
     // Hook: wstrzyknięcie SEU w komendę aktuatora
-    seu_hook_cmd(&cmd);
+    seu_hook_output_cmd(&output_cmd);
 
 #if PROTECT_SRL_EN
     // Zlicz wywołania SRL (koszt mechanizmu)
@@ -280,41 +279,47 @@ static void task_actuator(void *arg) {
     // SRL: ogranicz narastanie/zmianę komendy między próbkami
     if (!have_last) {
       // Pierwsza próbka: ustaw stan bez limitowania
-      last_mx = cmd.mx; last_my = cmd.my; last_mz = cmd.mz;
+      last_mx = output_cmd.mx; last_my = output_cmd.my; last_mz = output_cmd.mz;
       have_last = 1;
     } else {
       uint32_t c = 0u;
       // Limituj każdą oś osobno i zlicz ile razy przycięto
-      c = 0u; cmd.mx = limit_step(cmd.mx, last_mx, SRL_STEP_MAX, &c); g_srl_clamps += c;
-      c = 0u; cmd.my = limit_step(cmd.my, last_my, SRL_STEP_MAX, &c); g_srl_clamps += c;
-      c = 0u; cmd.mz = limit_step(cmd.mz, last_mz, SRL_STEP_MAX, &c); g_srl_clamps += c;
+      c = 0u;
+      output_cmd.mx = limit_step(output_cmd.mx, last_mx, SRL_STEP_MAX, &c);
+      g_srl_clamps += c;
+      c = 0u;
+      output_cmd.my = limit_step(output_cmd.my, last_my, SRL_STEP_MAX, &c);
+      g_srl_clamps += c;
+      c = 0u;
+      output_cmd.mz = limit_step(output_cmd.mz, last_mz, SRL_STEP_MAX, &c);
+      g_srl_clamps += c;
       // Zaktualizuj stan SRL
-      last_mx = cmd.mx; last_my = cmd.my; last_mz = cmd.mz;
+      last_mx = output_cmd.mx; last_my = output_cmd.my; last_mz = output_cmd.mz;
     }
 #else
     // Bez SRL: wyczyść stan, żeby po przełączeniu trybu nie było starej historii
     have_last = 0;
 #endif
     // Zlicz próbki z saturacją
-    if (cmd.sat_flags) sat_total++;
+    if (output_cmd.sat_flags) sat_total++;
 
     // A(seq)=max(|mx|,|my|,|mz|)
-    uint32_t amx = u32_abs_i32(cmd.mx);
-    uint32_t amy = u32_abs_i32(cmd.my);
-    uint32_t amz = u32_abs_i32(cmd.mz);
+    uint32_t amx = u32_abs_i32(output_cmd.mx);
+    uint32_t amy = u32_abs_i32(output_cmd.my);
+    uint32_t amz = u32_abs_i32(output_cmd.mz);
     uint32_t amax = amx;
     if (amy > amax) amax = amy;
     if (amz > amax) amax = amz;
 
     // Log aktuatora
     uart_puts("[ACT  ] seq=");
-    uart_puthex_u32(cmd.seq);
+    uart_puthex_u32(output_cmd.seq);
     uart_puts(" m=(");
-    uart_puthex_i32(cmd.mx); uart_puts(",");
-    uart_puthex_i32(cmd.my); uart_puts(",");
-    uart_puthex_i32(cmd.mz);
+    uart_puthex_i32(output_cmd.mx); uart_puts(",");
+    uart_puthex_i32(output_cmd.my); uart_puts(",");
+    uart_puthex_i32(output_cmd.mz);
     uart_puts(") sat=");
-    uart_puthex_u32(cmd.sat_flags);
+    uart_puthex_u32(output_cmd.sat_flags);
     uart_puts(" sat_total=");
     uart_puthex_u32(sat_total);
     uart_puts("\r\n");
@@ -325,7 +330,7 @@ static void task_actuator(void *arg) {
 int main(void) {
   // Buforowane kolejki komunikacyjne między taskami
   q_mag_samples = xQueueCreate(8, sizeof(mag_sample_t));
-  q_cmds = xQueueCreate(8, sizeof(coil_cmd_t));
+  q_output_cmds = xQueueCreate(8, sizeof(coil_output_cmd_t));
   // 3 taski: sensor -> controller -> actuator
   xTaskCreate(task_sensor, "sensor",  256, NULL, 2, NULL);
   xTaskCreate(task_controller, "control", 256, NULL, 2, NULL);
