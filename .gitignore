@@ -5,8 +5,6 @@
 *.bin
 *.hex
 
-*.png
-
 .DS_Store
 *.swp
 .vscode/
