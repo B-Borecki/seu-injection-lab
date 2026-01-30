@@ -2,7 +2,7 @@
 ## Generate logs and plots
 ```
 docker build -t seu .
-docker run --rm -v "$PWD/logs:/work/logs" seu
+docker run --rm -v "$PWD/logs:/work/logs" -v "$PWD/plots:/work/plots" seu
 ```
 
 ## Third-party code
