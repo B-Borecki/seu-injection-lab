@@ -382,6 +382,13 @@ def main():
         "SEU in output_cmd": cmd,
     }
 
+    pre_runs_amplitude = {
+        "SEU in input_prev": prev,
+        "SEU in input_curr": curr,
+        "SEU in output_cmd": cmd,
+        "baseline (no SEU)": baseline,
+    }
+
     # Flipy do wykresu amplitudy przed ochroną
     pre_flips = {
         "input_prev": flips_prev,
@@ -390,7 +397,7 @@ def main():
     }
 
     # Wykresy: amplituda, saturacje i mismatch vs baseline
-    plot_pre_amplitude_all(pre_runs, pre_flips, OUTDIR / "pre_amplitude_all.png")
+    plot_pre_amplitude_all(pre_runs_amplitude, pre_flips, OUTDIR / "pre_amplitude_all.png")
     plot_saturation_rate(pre_runs, OUTDIR / "pre_sat_rate_all.png")
     plot_mismatch_count(
         baseline,
