@@ -1,46 +1,42 @@
-TARGET   := firmware
-CC       := arm-none-eabi-gcc
-QEMU     := qemu-system-arm
-#GDB      := arm-none-eabi-gdb
-GDB      := gdb-multiarch
+CC = arm-none-eabi-gcc
+#CC GDB = gdb-multiarch
+OBJCOPY = arm-none-eabi-objcopy
+SIZE = arm-none-eabi-size
 
-FREERTOS := FreeRTOS/Source
-PORTDIR  := $(FREERTOS)/portable/GCC/ARM_CM3
-HEAPDIR  := $(FREERTOS)/portable/MemMang
+TARGET  = app
+SRCS    = main.c startup.c
+OBJS    = $(SRCS:.c=.o)
 
-PROTECT_MODE ?= 0
-SEU_MODE     ?= 0
+LDSCRIPT = linker.ld
 
-CFLAGS   := -mcpu=cortex-m3 -mthumb -O0 -g3 -ffreestanding \
-            -I. -I$(FREERTOS)/include -I$(PORTDIR) \
-            -DPROTECT_MODE=$(PROTECT_MODE)
+CFLAGS  = -mcpu=cortex-m3 -mthumb -O0 -g \
+          -ffreestanding -nostdlib \
+          -Wall -Wextra
 
-LDFLAGS  := -T linker.ld --specs=nosys.specs -nostartfiles
-LDLIBS   := -lc -lgcc -lnosys
+LDFLAGS = -T $(LDSCRIPT) -nostdlib
 
-SRCS     := startup.c main.c \
-            $(FREERTOS)/tasks.c $(FREERTOS)/queue.c $(FREERTOS)/list.c \
-            $(PORTDIR)/port.c $(HEAPDIR)/heap_4.c
-OBJS     := $(SRCS:.c=.o)
+SEU_ENABLE ?= 0
+CFLAGS += -DSEU_ENABLE=$(SEU_ENABLE)
 
-.PHONY: all clean run run-debug gdb
+all: $(TARGET).elf $(TARGET).bin
 
-all: $(TARGET).elf
+$(TARGET).elf: $(OBJS)
+	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) -o $@
+	$(SIZE) $@
+
+$(TARGET).bin: $(TARGET).elf
+	$(OBJCOPY) -O binary $< $@
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(TARGET).elf: $(OBJS) linker.ld
-	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) $(LDLIBS) -o $@
-
-run: $(TARGET).elf
-	$(QEMU) -M lm3s6965evb -kernel $(TARGET).elf -nographic
-
-run-debug: $(TARGET).elf
-	$(QEMU) -M lm3s6965evb -kernel $(TARGET).elf -nographic -S -s
-
-gdb: $(TARGET).elf
-	$(GDB) $(TARGET).elf -ex 'set $$SEU_MODE=$(SEU_MODE)' -x seu_injector.gdb
-
 clean:
-	rm -f $(OBJS) $(TARGET).elf
+	rm -f *.o *.elf *.bin
+
+run-no-seu:
+	$(MAKE) clean
+	$(MAKE) SEU_ENABLE=0
+
+run-seu:
+	$(MAKE) clean
+	$(MAKE) SEU_ENABLE=1
