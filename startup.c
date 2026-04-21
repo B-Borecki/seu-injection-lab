@@ -24,7 +24,8 @@ const void *vector_table[] = {
   Reset_Handler,
 // Kolejne wpisy: handlery wyjątków rdzenia Cortex-M
   Default_Handler,
-  Default_Handler,
+// Twarde błędy Cortex-M
+  HardFault_Handler,
   Default_Handler,
   Default_Handler,
   Default_Handler,
@@ -42,16 +43,19 @@ const void *vector_table[] = {
 };
 
 // Inicjalizacja pamięci: kopiowanie .data z FLASH do RAM i zerowanie .bss w RAM
-static void init_data_bss(void) {
+static void init_data_bss(void)
+{
   uint32_t *src = &_sidata;
   uint32_t *dst = &_sdata;
-  while (dst < &_edata) {
+  while (dst < &_edata)
+  {
     *dst++ = *src++;
   }
 
 // Zakres .bss w RAM musi zostać wyzerowany
   uint32_t *bss = &_sbss;
-  while (bss < &_ebss) {
+  while (bss < &_ebss)
+  {
     *bss++ = 0u;
   }
 }
@@ -60,6 +64,13 @@ static void init_data_bss(void) {
 void Reset_Handler(void) {
   init_data_bss();
   (void)main();
+  while (1) {}
+}
+
+// Cortex-M HardFault
+void HardFault_Handler(void) {
+  uart_puts("[ERROR] HardFault\r\n");
+  hardfault_count++;
   while (1) {}
 }
 
