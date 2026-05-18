@@ -1,67 +1,3 @@
-#ifdef EXPERIMENT_BASELINE
-  #define SEU_ENABLE 0
-  #define SEQ_TMR_ENABLE 0
-  #define SENSOR_CRC_ENABLE 0
-  #define QUEUE_PROTECT_ENABLE 0
-  #define CLAMP_ENABLE 0
-#elif defined(EXPERIMENT_SEU_ONLY)
-  #define SEU_ENABLE 1
-  #define SEQ_TMR_ENABLE 0
-  #define SENSOR_CRC_ENABLE 0
-  #define QUEUE_PROTECT_ENABLE 0
-  #define CLAMP_ENABLE 0
-#elif defined(EXPERIMENT_QUEUE_PROTECT)
-  #define SEU_ENABLE 1
-  #define SEQ_TMR_ENABLE 0
-  #define SENSOR_CRC_ENABLE 0
-  #define QUEUE_PROTECT_ENABLE 1
-  #define CLAMP_ENABLE 0
-#elif defined(EXPERIMENT_SENSOR_CRC)
-  #define SEU_ENABLE 1
-  #define SEQ_TMR_ENABLE 0
-  #define SENSOR_CRC_ENABLE 1
-  #define QUEUE_PROTECT_ENABLE 1
-  #define CLAMP_ENABLE 0
-#elif defined(EXPERIMENT_SEQ_TMR_AND_CLAMP)
-  #define SEU_ENABLE 1
-  #define SEQ_TMR_ENABLE 1
-  #define SENSOR_CRC_ENABLE 0
-  #define QUEUE_PROTECT_ENABLE 1
-  #define CLAMP_ENABLE 1
-#elif defined(EXPERIMENT_FULL)
-  #define SEU_ENABLE 1
-  #define SEQ_TMR_ENABLE 1
-  #define SENSOR_CRC_ENABLE 1
-  #define QUEUE_PROTECT_ENABLE 1
-  #define CLAMP_ENABLE 0
-#elif defined(EXPERIMENT_DATA_BSS)
-  #define SEU_IN_DATA_AND_BSS 1
-  #define SEU_ENABLE 1
-  #define SEQ_TMR_ENABLE 1
-  #define SENSOR_CRC_ENABLE 1
-  #define QUEUE_PROTECT_ENABLE 0
-  #define CLAMP_ENABLE 1
-#endif
-
-#ifndef SEU_ENABLE
-  #define SEU_ENABLE 0
-#endif
-#ifndef SEQ_TMR_ENABLE
-  #define SEQ_TMR_ENABLE 0
-#endif
-#ifndef SENSOR_CRC_ENABLE
-  #define SENSOR_CRC_ENABLE 0
-#endif
-#ifndef QUEUE_PROTECT_ENABLE
-  #define QUEUE_PROTECT_ENABLE 0
-#endif
-#ifndef CLAMP_ENABLE
-  #define CLAMP_ENABLE 0
-#endif
-#ifndef SEU_IN_DATA_AND_BSS
-  #define SEU_IN_DATA_AND_BSS 0
-#endif
-
 #include <stdint.h>
 #include "FreeRTOS.h"
 #include "task.h"
@@ -72,35 +8,22 @@
 #define K  8
 #define CMD_M_MAX  2000
 
+#ifndef SEU_ENABLE
+#define SEU_ENABLE 0
+#endif
+
 extern uint32_t _sseu;
 extern uint32_t _eseu;
-extern uint32_t _sdata;
-extern uint32_t _ebss;
 
-#if SENSOR_CRC_ENABLE
+typedef struct {
+  uint32_t seq;
+  int32_t  bx;
+  int32_t  by;
+  int32_t  bz;
+  uint8_t crc;
+} sensor_sample;
 
-  typedef struct
-  {
-    uint32_t seq;
-    int32_t  bx;
-    int32_t  by;
-    int32_t  bz;
-    uint8_t crc;
-  } sensor_sample;
-
-#else
-
-  typedef struct
-  {
-    uint32_t seq;
-    int32_t  bx;
-    int32_t  by;
-    int32_t  bz;
-  } sensor_sample;
-  #endif
-
-typedef struct
-{
+typedef struct {
   uint32_t seq;
   uint32_t prev_seq;
   int32_t  mx;
@@ -108,25 +31,17 @@ typedef struct
   int32_t  mz;
 } coil_cmd;
 
-typedef struct
-{
-  uint32_t primary_ptr;
-  uint8_t  primary_crc;
-  uint32_t backup_ptr;
-  uint8_t  backup_crc;
+typedef struct {
+    uint32_t primary_ptr;
+    uint8_t  primary_crc;
+    uint32_t backup_ptr;
+    uint8_t  backup_crc;
 } protected_queue_t;
 
-#if QUEUE_PROTECT_ENABLE
-  __attribute__((section(".seu_section")))
-  static protected_queue_t sensor_samples;
-  __attribute__((section(".seu_section")))
-  static protected_queue_t coil_cmds;
-#else
-  __attribute__((section(".seu_section")))
-  static QueueHandle_t sensor_samples;
-  __attribute__((section(".seu_section")))
-  static QueueHandle_t coil_cmds;
-#endif
+__attribute__((section(".seu_section")))
+static protected_queue_t sensor_samples;
+__attribute__((section(".seu_section")))
+static protected_queue_t coil_cmds;
 
 __attribute__((section(".seu_section")))
 static sensor_sample sample_sensor;
@@ -153,45 +68,66 @@ static int32_t my;
 __attribute__((section(".seu_section")))
 static int32_t mz;
 
-#if QUEUE_PROTECT_ENABLE || SENSOR_CRC_ENABLE
+// Chroniony licznik sekwencji
+__attribute__((section(".seu_section")))
+static uint32_t seq_tmr[3] = {0, 0, 0};
 
-static uint8_t crc8(uint8_t *data, int len)
-{
-  uint8_t crc = 0;
-  for (int i = 0; i < len; i++)
-  {
-    crc ^= data[i];
-    for (int j = 0; j < 8; j++)
-    {
-      if (crc & 0x80)
-      {
-        crc = (crc << 1) ^ 0x07;
-      }
-      else
-      {
-        crc = crc << 1;
-      }
+static uint32_t get_seq(void) {
+    uint32_t a = seq_tmr[0];
+    uint32_t b = seq_tmr[1];
+    uint32_t c = seq_tmr[2];
+
+    if (a == b || a == c) return a;
+    if (b == c) return b;
+
+    uart_puts("[TMR FAILURE]\r\n");
+    __asm volatile("udf #0");
+
+    return 0;
+}
+
+static void inc_seq(void) {
+    uint32_t new_seq = get_seq() + 1;
+    seq_tmr[0] = new_seq;
+    seq_tmr[1] = new_seq;
+    seq_tmr[2] = new_seq;
+}
+
+static void clamp_cmd(coil_cmd *cmd) {
+    if (cmd->mx > CMD_M_MAX) cmd->mx = CMD_M_MAX;
+    if (cmd->mx < -CMD_M_MAX) cmd->mx = -CMD_M_MAX;
+    
+    if (cmd->my > CMD_M_MAX) cmd->my = CMD_M_MAX;
+    if (cmd->my < -CMD_M_MAX) cmd->my = -CMD_M_MAX;
+    
+    if (cmd->mz > CMD_M_MAX) cmd->mz = CMD_M_MAX;
+    if (cmd->mz < -CMD_M_MAX) cmd->mz = -CMD_M_MAX;
+}
+
+static uint8_t crc8(uint8_t *data, int len) {
+    uint8_t crc = 0;
+    for (int i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (int j = 0; j < 8; j++) {
+            if (crc & 0x80) {
+                crc = (crc << 1) ^ 0x07;
+            } else {
+                crc = crc << 1;
+            }
+        }
     }
-  }
-  return crc;
+    return crc;
 }
 
-static uint8_t crc8_sensor(sensor_sample *s)
-{
-  return crc8((uint8_t*)s, 16);
+static uint8_t crc8_sensor(sensor_sample *s) {
+    return crc8((uint8_t*)s, 16);
 }
 
-static uint8_t crc8_ptr(uint32_t ptr)
-{
-  return crc8((uint8_t*)&ptr, 4);
+static uint8_t crc8_ptr(uint32_t ptr) {
+    return crc8((uint8_t*)&ptr, 4);
 }
 
-#endif
-
-#if QUEUE_PROTECT_ENABLE
-
-  static void init_protected_queue(protected_queue_t *pq, QueueHandle_t q)
-  {
+static void init_protected_queue(protected_queue_t *pq, QueueHandle_t q) {
     uint32_t ptr = (uint32_t)q;
     
     pq->primary_ptr = ptr;
@@ -199,10 +135,9 @@ static uint8_t crc8_ptr(uint32_t ptr)
     
     pq->backup_ptr = ptr;
     pq->backup_crc = crc8_ptr(ptr);
-  }
+}
 
-  static QueueHandle_t get_protected_queue(protected_queue_t *pq, const char *name)
-  {
+static QueueHandle_t get_protected_queue(protected_queue_t *pq, const char *name) {
     uint32_t primary_ptr = pq->primary_ptr;
     uint32_t backup_ptr = pq->backup_ptr;
     
@@ -212,122 +147,51 @@ static uint8_t crc8_ptr(uint32_t ptr)
     int valid_primary = (primary_crc == pq->primary_crc);
     int valid_backup = (backup_crc == pq->backup_crc);
     
-    if (valid_primary && valid_backup)
-    {
-      return (QueueHandle_t)primary_ptr;
+    if (valid_primary && valid_backup) {
+        return (QueueHandle_t)primary_ptr;
     }
     
-    if (valid_primary)
-    {
-      pq->backup_ptr = primary_ptr;
-      pq->backup_crc = primary_crc;
-      uart_puts("[");
-      uart_puts(name);
-      uart_puts(" backup CORRUPTED] backup repaired\r\n");
-      return (QueueHandle_t)primary_ptr;
+    if (valid_primary) {
+        pq->backup_ptr = primary_ptr;
+        pq->backup_crc = primary_crc;
+        uart_puts("[");
+        uart_puts(name);
+        uart_puts(" backup CORRUPTED] backup repaired\r\n");
+        return (QueueHandle_t)primary_ptr;
     }
-    else if (valid_backup)
-    {
-      pq->primary_ptr = backup_ptr;
-      pq->primary_crc = backup_crc;
-      uart_puts("[");
-      uart_puts(name);
-      uart_puts(" CORRUPTED] primary repaired\r\n");
-      return (QueueHandle_t)backup_ptr;
+    else if (valid_backup) {
+        pq->primary_ptr = backup_ptr;
+        pq->primary_crc = backup_crc;
+        uart_puts("[");
+        uart_puts(name);
+        uart_puts(" CORRUPTED] primary repaired\r\n");
+        return (QueueHandle_t)backup_ptr;
     }
-    else
-    {
+    else {
       uart_puts("[");
       uart_puts(name);
       uart_puts(" CRITICAL] both pointers corrupted!\r\n");
       __asm volatile("udf #0");
       return NULL;
     }
-  }
-  
-  static void set_sensor_samples(QueueHandle_t q)
-  {
+}
+
+
+static void set_sensor_samples(QueueHandle_t q) {
     init_protected_queue(&sensor_samples, q);
-  }
-  static QueueHandle_t get_sensor_samples(void)
-  {
+}
+
+static QueueHandle_t get_sensor_samples(void) {
     return get_protected_queue(&sensor_samples, "SAMPLE QUEUE");
-  }
-  static void set_coil_cmds(QueueHandle_t q)
-  {
+}
+
+static void set_coil_cmds(QueueHandle_t q) {
     init_protected_queue(&coil_cmds, q);
-  }
-  static QueueHandle_t get_coil_cmds(void)
-  {
+}
+
+static QueueHandle_t get_coil_cmds(void) {
     return get_protected_queue(&coil_cmds, "CMD QUEUE");
-  }
-
-#else
-
-  #define set_sensor_samples(q) (sensor_samples = (q))
-  #define get_sensor_samples() (sensor_samples)
-  #define set_coil_cmds(q) (coil_cmds = (q))
-  #define get_coil_cmds() (coil_cmds)
-
-#endif
-
-#if SEQ_TMR_ENABLE
-// Chroniony licznik sekwencji
-__attribute__((section(".seu_section")))
-static uint32_t seq_tmr[3] = {0, 0, 0};
-
-static uint32_t get_seq(void)
-{
-  uint32_t a = seq_tmr[0];
-  uint32_t b = seq_tmr[1];
-  uint32_t c = seq_tmr[2];
-
-  if (a == b || a == c)
-  {
-    return a;
-  }
-  if (b == c)
-  {
-    return b;
-  }
-
-  uart_puts("[TMR FAILURE]\r\n");
-  __asm volatile("udf #0");
-
-  return 0;
 }
-
-static void inc_seq(void)
-{
-  uint32_t new_seq = get_seq() + 1;
-  seq_tmr[0] = new_seq;
-  seq_tmr[1] = new_seq;
-  seq_tmr[2] = new_seq;
-}
-
-#else
-
-  static uint32_t seq = 0;
-  static uint32_t get_seq(void) { return seq; }
-  static void inc_seq(void) { seq++; }
-
-#endif
-
-#if CLAMP_ENABLE
-
-static void clamp_cmd(coil_cmd *cmd)
-{
-  if (cmd->mx > CMD_M_MAX) cmd->mx = CMD_M_MAX;
-  if (cmd->mx < -CMD_M_MAX) cmd->mx = -CMD_M_MAX;
-  
-  if (cmd->my > CMD_M_MAX) cmd->my = CMD_M_MAX;
-  if (cmd->my < -CMD_M_MAX) cmd->my = -CMD_M_MAX;
-  
-  if (cmd->mz > CMD_M_MAX) cmd->mz = CMD_M_MAX;
-  if (cmd->mz < -CMD_M_MAX) cmd->mz = -CMD_M_MAX;
-}
-
-#endif
 
 static volatile uint32_t sample_count = 0;
 static volatile uint32_t error_count = 0;
@@ -341,8 +205,9 @@ static volatile int32_t propagation_mx = 0;
 static volatile int32_t propagation_my = 0;
 static volatile int32_t propagation_mz = 0;
 
+
 // Obliczenia referencyjne, służą do badania zaburzeń w symulowanym układzie
-static void compute_reference(uint32_t seq, int32_t seq_prev, int32_t *mx_ref, int32_t *my_ref, int32_t *mz_ref)
+static void compute_reference(uint32_t seq, uint32_t seq_prev, int32_t *mx_ref, int32_t *my_ref, int32_t *mz_ref)
 {
   const int32_t BX = 20000;
   const int32_t BY = -5000;
@@ -376,22 +241,27 @@ static void compute_reference(uint32_t seq, int32_t seq_prev, int32_t *mx_ref, i
   int32_t my = -K * dBy;
   int32_t mz = -K * dBz;
 
+  if (mx > CMD_M_MAX) mx = CMD_M_MAX;
+  if (mx < -CMD_M_MAX) mx = -CMD_M_MAX;
+  if (my > CMD_M_MAX) my = CMD_M_MAX;
+  if (my < -CMD_M_MAX) my = -CMD_M_MAX;
+  if (mz > CMD_M_MAX) mz = CMD_M_MAX;
+  if (mz < -CMD_M_MAX) mz = -CMD_M_MAX;
+
   *mx_ref = mx;
   *my_ref = my;
   *mz_ref = mz;
 }
 
 // SENSOR
-static void task_sensor(void *arg)
-{
+static void task_sensor(void *arg) {
   (void)arg;
 
   const int32_t BX = 20000;
   const int32_t BY = -5000;
   const int32_t BZ = 12000;
 
-  while (1)
-  {
+  while (1) {
     seq = get_seq();
     int32_t dx = (int32_t)(seq & 0xFF) - 128;
     int32_t dy = (int32_t)((seq >> 1) & 0xFF) - 128;
@@ -399,32 +269,24 @@ static void task_sensor(void *arg)
 
     int32_t variation = (500 * sin_table[seq % 360]) / 1000;
 
-    if (propagation_mx + propagation_my + propagation_mz != 0)
-    {
+    if (propagation_mx + propagation_my + propagation_mz != 0) {
       propagation_count++;
     }
     
-    sample_sensor = (sensor_sample)
-    {
+    sample_sensor = (sensor_sample){
       .seq = seq,
       .bx  = BX + dx + variation + propagation_mx,
       .by  = BY + dy + variation / 2 + propagation_my,
       .bz  = BZ + dz + variation / 3 + propagation_mz,
     };
 
-    #if SENSOR_CRC_ENABLE
-
-        sample_sensor.crc = crc8_sensor(&sample_sensor);
-
-    #endif
+    sample_sensor.crc = crc8_sensor(&sample_sensor);
 
     vTaskDelay(pdMS_TO_TICKS(1)); 
 
-    //#####zmiana
     if (xQueueSend(get_sensor_samples(), &sample_sensor, 0) != pdPASS) {
       uart_puts("[SAMPLE QUEUE FULL]\r\n");
     }
-
     sample_count++;
     vTaskDelay(pdMS_TO_TICKS(10));
     inc_seq();
@@ -432,31 +294,26 @@ static void task_sensor(void *arg)
 }
 
 // CONTROLLER
-static void task_controller(void *arg)
-{
+static void task_controller(void *arg) {
   (void)arg;
 
   // Pierwsza próbka jest porpawna, bo task_seu startuje z opóźnieniem
-  if (xQueueReceive(get_sensor_samples(), &sample_controller, portMAX_DELAY) == pdPASS)
-  {
-    prev_sample = sample_controller;
-    good_samples++;
-  }
+  if (xQueueReceive(get_sensor_samples(), &sample_controller, portMAX_DELAY) == pdPASS) {
+      prev_sample = sample_controller;
+      good_samples++;
+    }
 
-  while (1)
-  {
-    if (xQueueReceive(get_sensor_samples(), &sample_controller, portMAX_DELAY) != pdPASS) {continue;}
+  while (1) {
+    if (xQueueReceive(get_sensor_samples(), &sample_controller, portMAX_DELAY) != pdPASS) {
+      continue;
+    }
 
-    #if SENSOR_CRC_ENABLE
-
-      if (sample_controller.crc != crc8_sensor(&sample_controller))
-      {
-        omitted_samples++;
-        uart_puts("[SENSOR SAMPLE CORRUPTED] omitting sample\r\n");
-        continue;
-      }
-
-    #endif
+    if (sample_controller.crc != crc8_sensor(&sample_controller)) {
+      omitted_samples++;
+      uart_puts("[SENSOR SAMPLE CORRUPTED] omitting sample");
+      uart_puts("\r\n");
+      continue;
+    }
 
     dBx = sample_controller.bx - prev_sample.bx;
     dBy = sample_controller.by - prev_sample.by;
@@ -466,8 +323,7 @@ static void task_controller(void *arg)
     my = -K * dBy;
     mz = -K * dBz;
     
-    cmd_controller = (coil_cmd)
-    {
+    cmd_controller = (coil_cmd){
       .seq = sample_controller.seq,
       .prev_seq = prev_sample.seq,
       .mx = mx,
@@ -477,13 +333,8 @@ static void task_controller(void *arg)
 
     vTaskDelay(pdMS_TO_TICKS(1)); 
     
-    #if CLAMP_ENABLE
+    clamp_cmd(&cmd_controller);
 
-      clamp_cmd(&cmd_controller);
-
-    #endif
-
-    //######zmiana
     if (xQueueSend(get_coil_cmds(), &cmd_controller, 0) != pdPASS) {
       uart_puts("[CMD QUEUE FULL]\r\n");
     }
@@ -492,21 +343,22 @@ static void task_controller(void *arg)
 }
 
 // ACTUATOR + DETEKCJA BŁĘDÓW
-static void task_actuator(void *arg)
-{
+static void task_actuator(void *arg) {
   (void)arg;
 
-  while (1)
-  {
-    if (xQueueReceive(get_coil_cmds(), &cmd_actuator, portMAX_DELAY) != pdPASS) {continue;}
+  while (1) {
+    if (xQueueReceive(get_coil_cmds(), &cmd_actuator, portMAX_DELAY) != pdPASS) {
+      continue;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(1)); 
     
     int32_t mx_ref, my_ref, mz_ref;
     compute_reference(cmd_actuator.seq, cmd_actuator.prev_seq, &mx_ref, &my_ref, &mz_ref);
 
     uint32_t err = u32_abs_i32(cmd_actuator.mx - mx_ref) + u32_abs_i32(cmd_actuator.my - my_ref) + u32_abs_i32(cmd_actuator.mz - mz_ref);
 
-    if (err > 0)
-    {
+    if (err > 0) {
       error_count++;
 
       if (err > max_error) max_error = err;
@@ -520,9 +372,7 @@ static void task_actuator(void *arg)
       propagation_mx = (cmd_actuator.mx - mx_ref) / 100;
       propagation_my = (cmd_actuator.my - my_ref) / 100;
       propagation_mz = (cmd_actuator.mz - mz_ref) / 100;
-    }
-    else
-    {
+    } else {
       good_samples++;
       propagation_mx = 0;
       propagation_my = 0;
@@ -540,13 +390,9 @@ static void task_actuator(void *arg)
       uart_putdec_u32(error_count);
       uart_puts("\r\n");
 
-      #if SENSOR_CRC_ENABLE
-
-        uart_puts("samples omitted=");
-        uart_putdec_u32(omitted_samples);
-        uart_puts("\r\n");
-        
-      #endif
+      uart_puts("samples omitted=");
+      uart_putdec_u32(omitted_samples);
+      uart_puts("\r\n");
 
       uart_puts("good samples=");
       uart_putdec_u32(good_samples);
@@ -569,8 +415,7 @@ static void task_actuator(void *arg)
 // RNG + SEU
 static uint32_t rng_state = 0x12345678;
 
-static uint32_t xorshift32(void)
-{
+static uint32_t xorshift32(void) {
   uint32_t x = rng_state;
   x ^= x << 13;
   x ^= x >> 17;
@@ -583,19 +428,9 @@ static void task_seu(void *arg) {
   (void)arg;
 
   vTaskDelay(pdMS_TO_TICKS(50)); 
-  while (1)
-  {
-    #if SEU_IN_DATA_AND_BSS
-
-      uint8_t *start = (uint8_t*)&_sdata;
-      uint8_t *end   = (uint8_t*)&_ebss;
-
-    #else
-
-      uint8_t *start = (uint8_t*)&_sseu;
-      uint8_t *end   = (uint8_t*)&_eseu;
-
-    #endif
+  while (1) {
+    uint8_t *start = (uint8_t*)&_sseu;
+    uint8_t *end   = (uint8_t*)&_eseu;
 
     uint32_t range = end - start;
 
@@ -616,8 +451,7 @@ static void task_seu(void *arg) {
   }
 }
 
-int main(void)
-{
+int main(void) {
   uart_puts("START\n");
 
   set_sensor_samples(xQueueCreate(8, sizeof(sensor_sample)));
@@ -628,9 +462,7 @@ int main(void)
   xTaskCreate(task_actuator, "actuator", 256, NULL, 2, NULL);
 
 #if SEU_ENABLE
-
   xTaskCreate(task_seu, "seu", 256, NULL, 3, NULL);
-
 #endif
 
   vTaskStartScheduler();

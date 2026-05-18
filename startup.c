@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <utils.h>
 
 // main() z programu użytkownika (docelowo uruchamiane po inicjalizacji RAM)
 extern int main(void);
@@ -6,15 +7,21 @@ extern int main(void);
 extern void vPortSVCHandler(void);
 extern void xPortPendSVHandler(void);
 extern void xPortSysTickHandler(void);
-// Handler resetu (punkt wejścia po starcie CPU) oraz domyślny handler wyjątków
+// Handler resetu (punkt wejścia po starcie CPU) oraz domyślny handler wyjątków i trwardych błędów
 void Reset_Handler(void);
 void Default_Handler(void);
+void HardFault_Handler(void);
+void MemManage_Handler(void);
+void BusFault_Handler(void);
+void UsageFault_Handler(void);
 // Zmienne z linker.ld: adresy potrzebne do skopiowania .data i wyzerowania .bss
 extern uint32_t _sidata;
 extern uint32_t _sdata;
 extern uint32_t _edata;
 extern uint32_t _sbss;
 extern uint32_t _ebss;
+extern uint32_t _sseu;
+extern uint32_t _eseu;
 // Tablica wektorów przerwań umieszczona w sekcji .isr_vector we FLASH
 __attribute__((section(".isr_vector")))
 const void *vector_table[] = {
@@ -26,9 +33,9 @@ const void *vector_table[] = {
   Default_Handler,
 // Twarde błędy Cortex-M
   HardFault_Handler,
-  Default_Handler,
-  Default_Handler,
-  Default_Handler,
+  MemManage_Handler,
+  BusFault_Handler,
+  UsageFault_Handler,
 // Zarezerwowane wpisy w tablicy wektorów
   0, 0, 0, 0,
 // SVCall używany przez FreeRTOS
@@ -69,8 +76,26 @@ void Reset_Handler(void) {
 
 // Cortex-M HardFault
 void HardFault_Handler(void) {
-  uart_puts("[ERROR] HardFault\r\n");
-  hardfault_count++;
+  uart_puts("[HARDFAULT]");
+  uart_puts("\r\n");
+  while (1) {}
+}
+
+void MemManage_Handler(void)
+{
+  uart_puts("[MEMMANAGE]\r\n");
+  while (1) {}
+}
+
+void BusFault_Handler(void)
+{
+  uart_puts("[BUSFAULT]\r\n");
+  while (1) {}
+}
+
+void UsageFault_Handler(void)
+{
+  uart_puts("[USAGEFAULT]\r\n");
   while (1) {}
 }
 

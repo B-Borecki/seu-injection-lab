@@ -41,4 +41,10 @@ zerowane na początku programu, trafiają do RAM */
     *(COMMON)
     _ebss = .;
   } > SRAM
+  
+  .seu_section (NOLOAD) : {
+    _sseu = .;
+    *(.seu_section*)
+    _eseu = .;
+  } > SRAM
 }
