@@ -99,7 +99,6 @@ void UsageFault_Handler(void)
   while (1) {}
 }
 
-// Domyślny handler: zatrzymaj CPU w nieskończonej pętli
 void Default_Handler(void) {
   while (1) {}
 }

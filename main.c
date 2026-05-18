@@ -33,13 +33,13 @@
   #define SEQ_TMR_ENABLE 1
   #define SENSOR_CRC_ENABLE 1
   #define QUEUE_PROTECT_ENABLE 1
-  #define CLAMP_ENABLE 0
+  #define CLAMP_ENABLE 1
 #elif defined(EXPERIMENT_DATA_BSS)
   #define SEU_IN_DATA_AND_BSS 1
   #define SEU_ENABLE 1
   #define SEQ_TMR_ENABLE 1
   #define SENSOR_CRC_ENABLE 1
-  #define QUEUE_PROTECT_ENABLE 0
+  #define QUEUE_PROTECT_ENABLE 1
   #define CLAMP_ENABLE 1
 #endif
 
@@ -176,19 +176,23 @@ static uint8_t crc8(uint8_t *data, int len)
   return crc;
 }
 
+#endif
+
+#if SENSOR_CRC_ENABLE
+
 static uint8_t crc8_sensor(sensor_sample *s)
 {
   return crc8((uint8_t*)s, 16);
 }
 
-static uint8_t crc8_ptr(uint32_t ptr)
-{
-  return crc8((uint8_t*)&ptr, 4);
-}
-
 #endif
 
 #if QUEUE_PROTECT_ENABLE
+
+  static uint8_t crc8_ptr(uint32_t ptr)
+  {
+    return crc8((uint8_t*)&ptr, 4);
+  }
 
   static void init_protected_queue(protected_queue_t *pq, QueueHandle_t q)
   {
@@ -420,7 +424,6 @@ static void task_sensor(void *arg)
 
     vTaskDelay(pdMS_TO_TICKS(1)); 
 
-    //#####zmiana
     if (xQueueSend(get_sensor_samples(), &sample_sensor, 0) != pdPASS) {
       uart_puts("[SAMPLE QUEUE FULL]\r\n");
     }
@@ -483,7 +486,6 @@ static void task_controller(void *arg)
 
     #endif
 
-    //######zmiana
     if (xQueueSend(get_coil_cmds(), &cmd_controller, 0) != pdPASS) {
       uart_puts("[CMD QUEUE FULL]\r\n");
     }

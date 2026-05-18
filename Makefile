@@ -15,6 +15,8 @@ CFLAGS  = -mcpu=cortex-m3 -mthumb -O0 -g \
 
 LDFLAGS = -T linker.ld -nostdlib
 
+LOGS_DIR = logs
+
 all: $(TARGET).elf $(TARGET).bin
 
 $(TARGET).elf: $(OBJS)
@@ -45,14 +47,14 @@ queue_protect:
 	$(MAKE) EXP=QUEUE_PROTECT
 	$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic
 
-tmr_clamp:
-	$(MAKE) clean
-	$(MAKE) EXP=SEQ_TMR_AND_CLAMP
-	$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic
-
 sensor_crc:
 	$(MAKE) clean
 	$(MAKE) EXP=SENSOR_CRC
+	$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic
+
+tmr_clamp:
+	$(MAKE) clean
+	$(MAKE) EXP=SEQ_TMR_AND_CLAMP
 	$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic
 
 full:
@@ -60,23 +62,11 @@ full:
 	$(MAKE) EXP=FULL
 	$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic
 
+# SEU w całą sekcję .data i .bss
 data_bss:
 	$(MAKE) clean
 	$(MAKE) EXP=DATA_BSS
 	$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic
 
-all_experiments:
-	@echo "=== BASELINE ===" > results.txt
-	$(MAKE) baseline >> results.txt 2>&1
-	@echo "\n=== QUEUE_PROTECT ===" >> results.txt
-	$(MAKE) queue_protect >> results.txt 2>&1
-	@echo "\n=== SEQ_TMR ===" >> results.txt
-	$(MAKE) seq_tmr >> results.txt 2>&1
-	@echo "\n=== SENSOR_CRC ===" >> results.txt
-	$(MAKE) sensor_crc >> results.txt 2>&1
-	@echo "\n=== FULL ===" >> results.txt
-	$(MAKE) full >> results.txt 2>&1
-	@echo "Wyniki zapisane w results.txt"
 
-
-.PHONY: all clean baseline seu_only seq_tmr sensor_crc queue_protect full all_experiments
+.PHONY: all clean baseline seu_only seq_tmr sensor_crc queue_protect full data_bss
