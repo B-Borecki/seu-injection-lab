@@ -9,9 +9,7 @@ OBJS    = $(SRCS:.c=.o)
 
 FREERTOS := FreeRTOS/Source
 
-CFLAGS  = -mcpu=cortex-m3 -mthumb -O0 -g \
-          -ffreestanding -nostdlib -I. -I$(FREERTOS)/include -I$(FREERTOS)/portable/GCC/ARM_CM3 \
-          -Wall -Wextra -DEXPERIMENT_$(EXP)
+CFLAGS  = -mcpu=cortex-m3 -mthumb -O0 -g -ffreestanding -nostdlib -I. -I$(FREERTOS)/include -I$(FREERTOS)/portable/GCC/ARM_CM3 -Wall -Wextra -DEXPERIMENT_$(EXP)
 
 LDFLAGS = -T linker.ld -nostdlib
 
@@ -47,14 +45,20 @@ queue_protect:
 	$(MAKE) EXP=QUEUE_PROTECT
 	$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic
 
+seq_tmr:
+	$(MAKE) clean
+	$(MAKE) EXP=SEQ_TMR
+	$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic
+	
 sensor_crc:
 	$(MAKE) clean
 	$(MAKE) EXP=SENSOR_CRC
 	$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic
 
-tmr_clamp:
+
+cmd_clamp:
 	$(MAKE) clean
-	$(MAKE) EXP=SEQ_TMR_AND_CLAMP
+	$(MAKE) EXP=CMD_CLAMP
 	$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic
 
 full:
@@ -69,4 +73,4 @@ data_bss:
 	$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic
 
 
-.PHONY: all clean baseline seu_only seq_tmr sensor_crc queue_protect full data_bss
+.PHONY: all clean baseline seu_only seq_tmr cmd_clamp sensor_crc queue_protect full data_bss
