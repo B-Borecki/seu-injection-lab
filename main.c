@@ -84,7 +84,7 @@ extern uint32_t _sdata;
 extern uint32_t _ebss;
 
 #if SENSOR_CRC_ENABLE
-
+  // próbka sensora z CRC
   typedef struct
   {
     uint32_t seq;
@@ -95,7 +95,7 @@ extern uint32_t _ebss;
   } sensor_sample;
 
 #else
-
+  // próbka sensora bez ochrony
   typedef struct
   {
     uint32_t seq;
@@ -103,8 +103,8 @@ extern uint32_t _ebss;
     int32_t  by;
     int32_t  bz;
   } sensor_sample;
-  #endif
-
+#endif
+// komenda cewek
 typedef struct
 {
   uint32_t seq;
@@ -115,6 +115,7 @@ typedef struct
 } coil_cmd;
 
 #if QUEUE_PROTECT_ENABLE
+  // ochrona wskaźników kolejek DMR + CRC
   typedef struct
   {
     uint32_t primary_ptr;
@@ -128,6 +129,7 @@ typedef struct
   __attribute__((section(".seu_section")))
   static protected_queue_t coil_cmds;
 #else
+  // kolejki bez ochrony
   __attribute__((section(".seu_section")))
   static QueueHandle_t sensor_samples;
   __attribute__((section(".seu_section")))
@@ -214,7 +216,7 @@ static uint8_t crc8_sensor(sensor_sample *s)
   {
     return crc8((uint8_t*)&ptr, 4);
   }
-
+  
   static void init_protected_queue(protected_queue_t *pq, QueueHandle_t q)
   {
     uint32_t ptr = (uint32_t)q;
@@ -225,7 +227,7 @@ static uint8_t crc8_sensor(sensor_sample *s)
     pq->backup_ptr = ptr;
     pq->backup_crc = crc8_ptr(ptr);
   }
-
+  
   static QueueHandle_t get_protected_queue(protected_queue_t *pq, const char *name)
   {
     uint32_t primary_ptr = pq->primary_ptr;
@@ -288,7 +290,7 @@ static uint8_t crc8_sensor(sensor_sample *s)
   }
 
 #else
-
+  // funkcje dla kolejek bez ochrony
   #define set_sensor_samples(q) (sensor_samples = (q))
   #define get_sensor_samples() (sensor_samples)
   #define set_coil_cmds(q) (coil_cmds = (q))
@@ -396,11 +398,12 @@ static void compute_reference(uint32_t seq, int32_t seq_prev, int32_t *mx_ref, i
   *mz_ref = mz;
 }
 
-// SENSOR
+// SENSOR, generuje próbki
 static void task_sensor(void *arg)
 {
   (void)arg;
-
+  
+  // wartości bazowe czujnika
   const int32_t BX = 20000;
   const int32_t BY = -5000;
   const int32_t BZ = 12000;
@@ -408,12 +411,16 @@ static void task_sensor(void *arg)
   while (1)
   {
     uint32_t seq = get_seq();
+    
+    // symulacja poruszania się satelity
     int32_t dx = (int32_t)(seq & 0xFF) - 128;
     int32_t dy = (int32_t)((seq >> 1) & 0xFF) - 128;
     int32_t dz = (int32_t)((seq >> 2) & 0xFF) - 128;
-
+    
+    // sinusoidalna zmiana, szum
     int32_t variation = (500 * sin_table[seq % 360]) / 1000;
-
+    
+    // propagacja błędu z poprzedniej próbki
     if (propagation_mx + propagation_my + propagation_mz != 0)
     {
       propagation_count++;
@@ -428,12 +435,11 @@ static void task_sensor(void *arg)
     };
 
     #if SENSOR_CRC_ENABLE
-
+        // oblicz crc przed wysłaniem próbki
         sample_sensor.crc = crc8_sensor(&sample_sensor);
-
     #endif
 
-    // Dłuższy czas na SEU, symulacja uszkodzenia w kolejce
+    // Większe okno dla SEU, symulacja uszkodzenia w kolejce
     vTaskDelay(pdMS_TO_TICKS(1)); 
     if (xQueueSend(get_sensor_samples(), &sample_sensor, 0) != pdPASS) {
       uart_puts("[SAMPLE QUEUE FULL]\r\n");
@@ -445,7 +451,7 @@ static void task_sensor(void *arg)
   }
 }
 
-// CONTROLLER
+// CONTROLLER, przetwarza próbki na komendy dla cewek
 static void task_controller(void *arg)
 {
   (void)arg;
@@ -462,7 +468,7 @@ static void task_controller(void *arg)
     if (xQueueReceive(get_sensor_samples(), &sample_controller, portMAX_DELAY) != pdPASS) {continue;}
 
     #if SENSOR_CRC_ENABLE
-
+      // weryfikacja poprawności próbki
       if (sample_controller.crc != crc8_sensor(&sample_controller))
       {
         omitted_samples++;
@@ -474,11 +480,11 @@ static void task_controller(void *arg)
       }
 
     #endif
-
+    
     dBx = sample_controller.bx - prev_sample.bx;
     dBy = sample_controller.by - prev_sample.by;
     dBz = sample_controller.bz - prev_sample.bz;
-
+    // moment = -K * pochodna
     mx = -K * dBx;
     my = -K * dBy;
     mz = -K * dBz;
@@ -492,12 +498,11 @@ static void task_controller(void *arg)
       .mz = mz,
     };
 
-    // Dłuższy czas na SEU, symulacja uszkodzenia w kolejce
+    // Większe okno dla SEU, symulacja uszkodzenia w kolejce
     vTaskDelay(pdMS_TO_TICKS(1)); 
     #if CLAMP_ENABLE
-
+      // ogranicz komendy do bezpiecznego zakresu
       clamp_cmd(&cmd_controller);
-
     #endif
 
     if (xQueueSend(get_coil_cmds(), &cmd_controller, 0) != pdPASS) {
@@ -507,7 +512,7 @@ static void task_controller(void *arg)
   }
 }
 
-// ACTUATOR + DETEKCJA BŁĘDÓW
+// ACTUATOR, wykonuje komendy i wykrywa błędy
 static void task_actuator(void *arg)
 {
   (void)arg;
@@ -518,8 +523,10 @@ static void task_actuator(void *arg)
     
     int32_t mx_ref, my_ref, mz_ref;
 
+    // oblicz referencję
     compute_reference(expected_seq, cmd_actuator.prev_seq, &mx_ref, &my_ref, &mz_ref);
 
+    // błąd = suma bezwzględnych różnic na każdej osi
     uint32_t err = u32_abs_i32(cmd_actuator.mx - mx_ref) + u32_abs_i32(cmd_actuator.my - my_ref) + u32_abs_i32(cmd_actuator.mz - mz_ref);
 
     if (err > 0)
@@ -534,6 +541,7 @@ static void task_actuator(void *arg)
       uart_putdec_u32(err);
       uart_puts("\r\n");
 
+      // propaguj błąd z powrotem do sensora
       propagation_mx = (cmd_actuator.mx - mx_ref) / 100;
       propagation_my = (cmd_actuator.my - my_ref) / 100;
       propagation_mz = (cmd_actuator.mz - mz_ref) / 100;
@@ -583,7 +591,7 @@ static void task_actuator(void *arg)
   }
 }
 
-// RNG + SEU
+// generator liczb pseudolosowych
 static uint32_t rng_state = 0x12345678;
 
 static uint32_t xorshift32(void)
@@ -596,19 +604,21 @@ static uint32_t xorshift32(void)
   return x;
 }
 
+// zadanie wstrzykujące błędy SEU
 static void task_seu(void *arg) {
   (void)arg;
 
+  // opóźnienie startu, pierwsze próbki są poprawne
   vTaskDelay(pdMS_TO_TICKS(50)); 
   while (1)
   {
     #if SEU_IN_DATA_AND_BSS
-
+      // uszkadzaj sekcje .data i .bss
       uint8_t *start = (uint8_t*)&_sdata;
       uint8_t *end   = (uint8_t*)&_ebss;
 
     #else
-
+      // uszkadzaj sekcję .seu_section
       uint8_t *start = (uint8_t*)&_sseu;
       uint8_t *end   = (uint8_t*)&_eseu;
 
@@ -616,7 +626,9 @@ static void task_seu(void *arg) {
 
     uint32_t range = end - start;
 
+    // losowy bajt
     uint32_t byte = xorshift32() % range;
+    // losowy bit
     uint8_t bit = xorshift32() % 8;
 
     uint8_t *target = start + byte;
@@ -627,9 +639,11 @@ static void task_seu(void *arg) {
     uart_puthex_u32(bit);
     uart_puts("\r\n");
 
+    // odwróć bit
     *target ^= (1 << bit);
     seu_count++;
 
+    // losowe opóźnienie 10-200ms
     vTaskDelay((xorshift32() % 190) + 10);
   }
 }
@@ -646,7 +660,6 @@ int main(void)
   xTaskCreate(task_actuator, "actuator", 256, NULL, 2, NULL);
 
 #if SEU_ENABLE
-
   xTaskCreate(task_seu, "seu", 256, NULL, 3, NULL);
 
 #endif
