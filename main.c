@@ -157,6 +157,23 @@ static int32_t my;
 __attribute__((section(".seu_section")))
 static int32_t mz;
 
+
+// zmienne do statystyk i referencji
+static volatile uint32_t sample_count = 0;
+static volatile uint32_t error_count = 0;
+static volatile uint32_t max_error = 0;
+static volatile int32_t seq_prev = -1;
+static volatile uint32_t omitted_samples = 0;
+static volatile uint32_t good_samples = 0;
+static volatile uint32_t propagation_count = 0;
+static volatile uint32_t seu_count = 0;
+static volatile uint32_t expected_seq = 0;
+
+// propagacja wykorzystywana do zaburzania kolejnych próbek
+static volatile int32_t propagation_mx = 0;
+static volatile int32_t propagation_my = 0;
+static volatile int32_t propagation_mz = 0;
+
 #if QUEUE_PROTECT_ENABLE || SENSOR_CRC_ENABLE
 
 static uint8_t crc8(uint8_t *data, int len)
@@ -311,13 +328,15 @@ static void inc_seq(void)
   seq_tmr[0] = new_seq;
   seq_tmr[1] = new_seq;
   seq_tmr[2] = new_seq;
+
+  /* zmienna do liczenia referencji */ expected_seq++;
 }
 
 #else
   __attribute__((section(".seu_section")))
   static uint32_t seq = 0;
   static uint32_t get_seq(void) { return seq; }
-  static void inc_seq(void) { seq++; }
+  static void inc_seq(void) { seq++; /* zmienna do liczenia referencji */ expected_seq++;}
 
 #endif
 
@@ -336,19 +355,6 @@ static void clamp_cmd(coil_cmd *cmd)
 }
 
 #endif
-
-static volatile uint32_t sample_count = 0;
-static volatile uint32_t error_count = 0;
-static volatile uint32_t max_error = 0;
-static volatile int32_t seq_prev = -1;
-static volatile uint32_t omitted_samples = 0;
-static volatile uint32_t good_samples = 0;
-static volatile uint32_t propagation_count = 0;
-static volatile uint32_t seu_count = 0;
-
-static volatile int32_t propagation_mx = 0;
-static volatile int32_t propagation_my = 0;
-static volatile int32_t propagation_mz = 0;
 
 // Obliczenia referencyjne, służą do badania zaburzeń w symulowanym układzie
 static void compute_reference(uint32_t seq, int32_t seq_prev, int32_t *mx_ref, int32_t *my_ref, int32_t *mz_ref)
@@ -512,7 +518,7 @@ static void task_actuator(void *arg)
     
     int32_t mx_ref, my_ref, mz_ref;
 
-    compute_reference(cmd_actuator.seq, cmd_actuator.prev_seq, &mx_ref, &my_ref, &mz_ref);
+    compute_reference(expected_seq, cmd_actuator.prev_seq, &mx_ref, &my_ref, &mz_ref);
 
     uint32_t err = u32_abs_i32(cmd_actuator.mx - mx_ref) + u32_abs_i32(cmd_actuator.my - my_ref) + u32_abs_i32(cmd_actuator.mz - mz_ref);
 
