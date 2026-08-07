@@ -17,7 +17,7 @@
 #define configUSE_COUNTING_SEMAPHORES   1
 #define configQUEUE_REGISTRY_SIZE       0
 
-#define configUSE_TRACE_FACILITY        0
+#define configUSE_TRACE_FACILITY        1
 #define configUSE_STATS_FORMATTING_FUNCTIONS 0
 
 #define configUSE_IDLE_HOOK             0
@@ -32,4 +32,3 @@
 
 #define configKERNEL_INTERRUPT_PRIORITY         255
 #define configMAX_SYSCALL_INTERRUPT_PRIORITY    191
-

@@ -74,7 +74,7 @@
 #include "queue.h"
 #include "utils.h"
 
-#define MAX_SEQ  20000
+#define MAX_SEQ  1000
 #define K  8
 #define CMD_M_MAX  2000
 
@@ -159,7 +159,6 @@ static int32_t my;
 __attribute__((section(".seu_section")))
 static int32_t mz;
 
-
 // zmienne do statystyk i referencji
 static volatile uint32_t sample_count = 0;
 static volatile uint32_t error_count = 0;
@@ -170,7 +169,10 @@ static volatile uint32_t good_samples = 0;
 static volatile uint32_t propagation_count = 0;
 static volatile uint32_t seu_count = 0;
 static volatile uint32_t expected_seq = 0;
-
+static volatile uint32_t tmr_corrections = 0;
+static volatile uint32_t dmr_corrections = 0;
+static volatile uint32_t clamp_activations = 0;
+static volatile uint32_t detected_errors = 0;
 // propagacja wykorzystywana do zaburzania kolejnych próbek
 static volatile int32_t propagation_mx = 0;
 static volatile int32_t propagation_my = 0;
@@ -196,6 +198,7 @@ static uint8_t crc8(uint8_t *data, int len)
       }
     }
   }
+  
   return crc;
 }
 
@@ -246,6 +249,8 @@ static uint8_t crc8_sensor(sensor_sample *s)
     
     if (valid_primary)
     {
+      detected_errors++;
+      dmr_corrections++;
       pq->backup_ptr = primary_ptr;
       pq->backup_crc = primary_crc;
       uart_puts("[");
@@ -255,6 +260,8 @@ static uint8_t crc8_sensor(sensor_sample *s)
     }
     else if (valid_backup)
     {
+      detected_errors++;
+      dmr_corrections++;
       pq->primary_ptr = backup_ptr;
       pq->primary_crc = backup_crc;
       uart_puts("[");
@@ -309,12 +316,29 @@ static uint32_t get_seq(void)
   uint32_t b = seq_tmr[1];
   uint32_t c = seq_tmr[2];
 
-  if (a == b || a == c)
+  if (a == b && b == c)
   {
     return a;
   }
+
+  if (a == b)
+  {
+    detected_errors++;
+    tmr_corrections++;
+    return a;
+  }
+
+  if (a == c)
+  {
+    detected_errors++;
+    tmr_corrections++;
+    return a;
+  }
+
   if (b == c)
   {
+    detected_errors++;
+    tmr_corrections++;
     return b;
   }
 
@@ -346,14 +370,47 @@ static void inc_seq(void)
 
 static void clamp_cmd(coil_cmd *cmd)
 {
-  if (cmd->mx > CMD_M_MAX) cmd->mx = CMD_M_MAX;
-  if (cmd->mx < -CMD_M_MAX) cmd->mx = -CMD_M_MAX;
-  
-  if (cmd->my > CMD_M_MAX) cmd->my = CMD_M_MAX;
-  if (cmd->my < -CMD_M_MAX) cmd->my = -CMD_M_MAX;
-  
-  if (cmd->mz > CMD_M_MAX) cmd->mz = CMD_M_MAX;
-  if (cmd->mz < -CMD_M_MAX) cmd->mz = -CMD_M_MAX;
+  uint8_t detection = 0;
+  if (cmd->mx > CMD_M_MAX)
+  {
+    detection=1;
+    ++clamp_activations;
+    cmd->mx = CMD_M_MAX;
+  }
+  if (cmd->mx < -CMD_M_MAX)
+  {
+    detection=1;
+    ++clamp_activations;
+    cmd->mx = -CMD_M_MAX;
+  }
+  if (cmd->my > CMD_M_MAX)
+  {
+    detection=1;
+    ++clamp_activations;
+    cmd->my = CMD_M_MAX;
+  }
+  if (cmd->my < -CMD_M_MAX)
+  {
+    detection=1;
+    ++clamp_activations;
+    cmd->my = -CMD_M_MAX;
+  }
+  if (cmd->mz > CMD_M_MAX)
+  {
+    detection=1;
+    ++clamp_activations;
+    cmd->mz = CMD_M_MAX;
+  }  
+  if (cmd->mz < -CMD_M_MAX)
+  {
+    detection=1;
+    ++clamp_activations;
+    cmd->mz = -CMD_M_MAX;
+  }
+
+  if (detection) {
+    detected_errors++;
+  }
 }
 
 #endif
@@ -471,6 +528,7 @@ static void task_controller(void *arg)
       // weryfikacja poprawności próbki
       if (sample_controller.crc != crc8_sensor(&sample_controller))
       {
+        detected_errors++;
         omitted_samples++;
         propagation_mx = 0;
         propagation_my = 0;
@@ -508,6 +566,7 @@ static void task_controller(void *arg)
     if (xQueueSend(get_coil_cmds(), &cmd_controller, 0) != pdPASS) {
       uart_puts("[CMD QUEUE FULL]\r\n");
     }
+
     prev_sample = sample_controller;
   }
 }
@@ -553,45 +612,77 @@ static void task_actuator(void *arg)
       propagation_my = 0;
       propagation_mz = 0;
     }
-
-    if (sample_count >= MAX_SEQ && cmd_actuator.seq >= MAX_SEQ)
-    {
-      uart_puts("[END]\r\n");
-      uart_puts("samples=");
-      uart_putdec_u32(sample_count);
-      uart_puts("\r\n");
-
-      uart_puts("SEUs=");
-      uart_putdec_u32(seu_count);
-      uart_puts("\r\n");
-
-      uart_puts("good samples=");
-      uart_putdec_u32(good_samples);
-      uart_puts("\r\n"); 
-
-      uart_puts("errors=");
-      uart_putdec_u32(error_count);
-      uart_puts("\r\n");
-      
-      uart_puts("samples omitted=");
-      uart_putdec_u32(omitted_samples);
-      uart_puts("\r\n");
-
-      uart_puts("max_error=0x");
-      uart_puthex_u32(max_error);
-      uart_puts("\r\n");
-
-      uart_puts("propagations=");
-      uart_putdec_u32(propagation_count);
-      uart_puts("\r\n");      
-
-      __asm volatile("cpsid i");
-      while (1) {}
-    }
   }
 }
 
-// generator liczb pseudolosowych
+static void task_monitor(void *arg)
+{
+    (void)arg;
+
+    while (1)
+    {
+        if (sample_count >= MAX_SEQ)
+        {
+            uart_puts("[END]\r\n");
+
+            uart_puts("samples=");
+            uart_putdec_u32(sample_count);
+            uart_puts("\r\n");
+
+            uart_puts("SEUs=");
+            uart_putdec_u32(seu_count);
+            uart_puts("\r\n");
+
+            uart_puts("good samples=");
+            uart_putdec_u32(good_samples);
+            uart_puts("\r\n");
+
+            uart_puts("errors=");
+            uart_putdec_u32(error_count);
+            uart_puts("\r\n");
+
+            uart_puts("samples omitted=");
+            uart_putdec_u32(omitted_samples);
+            uart_puts("\r\n");
+
+            uart_puts("max_error=0x");
+            uart_puthex_u32(max_error);
+            uart_puts("\r\n");
+
+            uart_puts("propagations=");
+            uart_putdec_u32(propagation_count);
+            uart_puts("\r\n");
+
+            uart_puts("detected_errors=");
+            uart_putdec_u32(detected_errors);
+            uart_puts("\r\n");
+
+            uart_puts("tmr_corrections=");
+            uart_putdec_u32(tmr_corrections);
+            uart_puts("\r\n");
+
+            uart_puts("dmr_corrections=");
+            uart_putdec_u32(dmr_corrections);
+            uart_puts("\r\n");
+
+            uart_puts("crc detections=");
+            uart_putdec_u32(omitted_samples);
+            uart_puts("\r\n");
+
+            uart_puts("clamp_activations=");
+            uart_putdec_u32(clamp_activations);
+            uart_puts("\r\n");
+
+
+            __asm volatile("cpsid i");
+            __asm volatile("udf #0");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+// RNG + SEU
 static uint32_t rng_state = 0x12345678;
 
 static uint32_t xorshift32(void)
@@ -658,6 +749,7 @@ int main(void)
   xTaskCreate(task_sensor, "sensor", 256, NULL, 2, NULL);
   xTaskCreate(task_controller, "controller", 256, NULL, 2, NULL);
   xTaskCreate(task_actuator, "actuator", 256, NULL, 2, NULL);
+  xTaskCreate(task_monitor, "monitor", 256, NULL, 4, NULL);
 
 #if SEU_ENABLE
   xTaskCreate(task_seu, "seu", 256, NULL, 3, NULL);

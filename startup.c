@@ -71,34 +71,34 @@ static void init_data_bss(void)
 void Reset_Handler(void) {
   init_data_bss();
   (void)main();
-  while (1) {}
+  __asm volatile("udf #0");
 }
 
 // Cortex-M HardFault
 void HardFault_Handler(void) {
   uart_puts("[HARDFAULT]");
   uart_puts("\r\n");
-  while (1) {}
+  __asm volatile("udf #0");
 }
 
 void MemManage_Handler(void)
 {
   uart_puts("[MEMMANAGE]\r\n");
-  while (1) {}
+  __asm volatile("udf #0");
 }
 
 void BusFault_Handler(void)
 {
   uart_puts("[BUSFAULT]\r\n");
-  while (1) {}
+  __asm volatile("udf #0");
 }
 
 void UsageFault_Handler(void)
 {
   uart_puts("[USAGEFAULT]\r\n");
-  while (1) {}
+  __asm volatile("udf #0");
 }
 
 void Default_Handler(void) {
-  while (1) {}
+  __asm volatile("udf #0");
 }
