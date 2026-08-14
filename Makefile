@@ -2,6 +2,7 @@ CC = arm-none-eabi-gcc
 OBJCOPY = arm-none-eabi-objcopy
 SIZE = arm-none-eabi-size
 QEMU := qemu-system-arm
+NM = arm-none-eabi-nm
 
 TARGET  = sift_exp
 
@@ -9,7 +10,9 @@ SRCS    = main.c startup.c FreeRTOS/Source/tasks.c FreeRTOS/Source/queue.c FreeR
 
 OBJS    = $(SRCS:.c=.o)
 
-CFLAGS  = -mcpu=cortex-m3 -mthumb -O0 -g -ffreestanding -nostdlib -I. -IFreeRTOS/Source/include -IFreeRTOS/Source/portable/GCC/ARM_CM3 -Wall -Wextra -DEXPERIMENT_$(EXP)
+SEU_SEED ?= 0x12345678
+
+CFLAGS  = -mcpu=cortex-m3 -mthumb -O0 -g -ffreestanding -nostdlib -I. -IFreeRTOS/Source/include -IFreeRTOS/Source/portable/GCC/ARM_CM3 -Wall -Wextra -DEXPERIMENT_$(EXP) -DSEU_SEED=$(SEU_SEED)
 
 LDFLAGS = -T linker.ld -nostdlib
 
@@ -28,27 +31,34 @@ $(TARGET).bin: $(TARGET).elf
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o *.elf *.bin
+	rm -f *.o *.elf *.bin *.size
 
 run:
 	$(QEMU)	-M lm3s6965evb -kernel $(TARGET).bin -nographic
 
-EXPERIMENTS := BASELINE SEU_ONLY QUEUE_PROTECT SEQ_TMR SENSOR_CRC CMD_CLAMP
+EXPERIMENTS := QUEUE_PROTECT SEQ_TMR CMD_CLAMP SENSOR_CRC FULL
+
+SEEDS := 0x12345678 0x24688642 0x11111111 0x76893011 0x3579753 0x67676767 0x77761234 0x99763333 0x87654321 0x09322003
 
 experiments:
 	mkdir -p $(LOGS_DIR)
-	@for EXP in $(EXPERIMENTS); do \
-		echo "Running $$EXP"; \
-		$(MAKE) clean; \
-		$(MAKE) EXP=$$EXP; \
-		cp $(TARGET).size $(LOGS_DIR)/$$EXP.size; \
-		$(QEMU) \
-			-M lm3s6965evb \
-			-kernel $(TARGET).bin \
-			-nographic \
-			| tee $(LOGS_DIR)/$$EXP.log; \
-	done
 
+	@i=1; \
+	for SEED in $(SEEDS); do \
+		SERIES=$$(printf "exp_%02d" $$i); \
+		echo "Running $$SERIES with seed=$$SEED"; \
+		mkdir -p $(LOGS_DIR)/$$SERIES; \
+		for EXP in $(EXPERIMENTS); do \
+			echo ""; \
+			echo "Running $$EXP with seed=$$SEED"; \
+			echo ""; \
+			$(MAKE) clean; \
+			$(MAKE) EXP=$$EXP SEU_SEED=$$SEED; \
+			cp $(TARGET).size $(LOGS_DIR)/$$SERIES/$$EXP.size; \
+			$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic | tee $(LOGS_DIR)/$$SERIES/$$EXP.log; \
+		done; \
+		i=$$((i + 1)); \
+	done
 
 baseline:
 	$(MAKE) clean
@@ -81,6 +91,11 @@ cmd_clamp:
 	$(MAKE) EXP=CMD_CLAMP
 	$(MAKE) run
 
+cmd_rate_limit:
+	$(MAKE) clean
+	$(MAKE) EXP=CMD_RATE_LIMIT
+	$(MAKE) run
+
 full:
 	$(MAKE) clean
 	$(MAKE) EXP=FULL
@@ -93,4 +108,4 @@ data_bss:
 	$(MAKE) run
 
 
-.PHONY: all clean baseline seu_only seq_tmr cmd_clamp sensor_crc queue_protect full data_bss
+.PHONY: all clean baseline seu_only seq_tmr cmd_clamp sensor_crc queue_protect cmd_rate_limit full data_bss

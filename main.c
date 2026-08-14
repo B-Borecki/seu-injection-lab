@@ -1,45 +1,39 @@
 #ifdef EXPERIMENT_BASELINE
-  #define SEU_ENABLE 0
-  #define SEQ_TMR_ENABLE 0
-  #define SENSOR_CRC_ENABLE 0
-  #define QUEUE_PROTECT_ENABLE 0
-  #define CLAMP_ENABLE 0
 #elif defined(EXPERIMENT_SEU_ONLY)
   #define SEU_ENABLE 1
-  #define SEQ_TMR_ENABLE 0
-  #define SENSOR_CRC_ENABLE 0
-  #define QUEUE_PROTECT_ENABLE 0
-  #define CLAMP_ENABLE 0
 #elif defined(EXPERIMENT_QUEUE_PROTECT)
   #define SEU_ENABLE 1
-  #define SEQ_TMR_ENABLE 0
-  #define SENSOR_CRC_ENABLE 0
   #define QUEUE_PROTECT_ENABLE 1
-  #define CLAMP_ENABLE 0
 #elif defined(EXPERIMENT_SEQ_TMR)
   #define SEU_ENABLE 1
-  #define SEQ_TMR_ENABLE 1
-  #define SENSOR_CRC_ENABLE 0
   #define QUEUE_PROTECT_ENABLE 1
-  #define CLAMP_ENABLE 0
-#elif defined(EXPERIMENT_SENSOR_CRC)
-  #define SEU_ENABLE 1
   #define SEQ_TMR_ENABLE 1
-  #define SENSOR_CRC_ENABLE 1
-  #define QUEUE_PROTECT_ENABLE 1
-  #define CLAMP_ENABLE 0
 #elif defined(EXPERIMENT_CMD_CLAMP)
   #define SEU_ENABLE 1
-  #define SEQ_TMR_ENABLE 1
-  #define SENSOR_CRC_ENABLE 1
   #define QUEUE_PROTECT_ENABLE 1
+  #define SEQ_TMR_ENABLE 1
   #define CLAMP_ENABLE 1
+#elif defined(EXPERIMENT_SENSOR_CRC)
+  #define SEU_ENABLE 1
+  #define QUEUE_PROTECT_ENABLE 1
+  #define SEQ_TMR_ENABLE 1
+  #define CLAMP_ENABLE 1
+  #define SENSOR_CRC_ENABLE 1
 #elif defined(EXPERIMENT_FULL)
   #define SEU_ENABLE 1
   #define SEQ_TMR_ENABLE 1
   #define SENSOR_CRC_ENABLE 1
   #define QUEUE_PROTECT_ENABLE 1
   #define CLAMP_ENABLE 1
+  #define SENSOR_PREV_CRC_ENABLE 1
+#elif defined(EXPERIMENT_CMD_RATE_LIMIT)
+  #define SEU_ENABLE 1
+  #define QUEUE_PROTECT_ENABLE 1
+  #define SEQ_TMR_ENABLE 1
+  #define SENSOR_CRC_ENABLE 1
+  #define CLAMP_ENABLE 1
+  #define SENSOR_PREV_CRC_ENABLE 1
+  #define CMD_RATE_LIMIT_ENABLE 1
 #elif defined(EXPERIMENT_DATA_BSS)
   #define SEU_IN_DATA_AND_BSS 1
   #define SEU_ENABLE 1
@@ -64,8 +58,15 @@
 #ifndef CLAMP_ENABLE
   #define CLAMP_ENABLE 0
 #endif
+#ifndef CMD_RATE_LIMIT_ENABLE
+  #define CMD_RATE_LIMIT_ENABLE 0
+#endif
 #ifndef SEU_IN_DATA_AND_BSS
   #define SEU_IN_DATA_AND_BSS 0
+#endif
+
+#ifndef SEU_SEED
+#define SEU_SEED 0x12345678u
 #endif
 
 #include <stdint.h>
@@ -74,9 +75,10 @@
 #include "queue.h"
 #include "utils.h"
 
-#define MAX_SEQ  1000
+#define MAX_SEQ  10000
 #define K  8
-#define CMD_M_MAX  2000
+#define CMD_M_MAX  2500
+#define CMD_MAX_STEP 1000
 
 extern uint32_t _sseu;
 extern uint32_t _eseu;
@@ -159,6 +161,13 @@ static int32_t my;
 __attribute__((section(".seu_section")))
 static int32_t mz;
 
+#if CMD_RATE_LIMIT_ENABLE
+__attribute__((section(".seu_section")))
+static coil_cmd prev_cmd;
+__attribute__((section(".seu_section")))
+static uint8_t previous_cmd_valid;
+#endif
+
 // zmienne do statystyk i referencji
 static volatile uint32_t sample_count = 0;
 static volatile uint32_t error_count = 0;
@@ -172,6 +181,7 @@ static volatile uint32_t expected_seq = 0;
 static volatile uint32_t tmr_corrections = 0;
 static volatile uint32_t dmr_corrections = 0;
 static volatile uint32_t clamp_activations = 0;
+static volatile uint32_t rate_limit_activations = 0;
 static volatile uint32_t detected_errors = 0;
 // propagacja wykorzystywana do zaburzania kolejnych próbek
 static volatile int32_t propagation_mx = 0;
@@ -415,6 +425,29 @@ static void clamp_cmd(coil_cmd *cmd)
 
 #endif
 
+#if CMD_RATE_LIMIT_ENABLE
+
+static int32_t limit_cmd_step(int32_t current, int32_t previous)
+{
+  int32_t delta = current - previous;
+
+  if (delta > CMD_MAX_STEP)
+  {
+      rate_limit_activations++;
+      return previous + CMD_MAX_STEP;
+  }
+
+  if (delta < -CMD_MAX_STEP)
+  {
+      rate_limit_activations++;
+      return previous - CMD_MAX_STEP;
+  }
+
+  return current;
+}
+
+#endif
+
 // Obliczenia referencyjne, służą do badania zaburzeń w symulowanym układzie
 static void compute_reference(uint32_t seq, int32_t seq_prev, int32_t *mx_ref, int32_t *my_ref, int32_t *mz_ref)
 {
@@ -495,9 +528,7 @@ static void task_sensor(void *arg)
         // oblicz crc przed wysłaniem próbki
         sample_sensor.crc = crc8_sensor(&sample_sensor);
     #endif
-
-    // Większe okno dla SEU, symulacja uszkodzenia w kolejce
-    vTaskDelay(pdMS_TO_TICKS(1)); 
+    
     if (xQueueSend(get_sensor_samples(), &sample_sensor, 0) != pdPASS) {
       uart_puts("[SAMPLE QUEUE FULL]\r\n");
     }
@@ -536,8 +567,22 @@ static void task_controller(void *arg)
         uart_puts("[SENSOR SAMPLE CORRUPTED] omitting sample\r\n");
         continue;
       }
-
     #endif
+
+    #if SENSOR_PREV_CRC_ENABLE
+      if (prev_sample.crc != crc8_sensor(&prev_sample))
+      {
+        prev_sample = sample_controller;
+        detected_errors++;
+        omitted_samples++;
+        propagation_mx = 0;
+        propagation_my = 0;
+        propagation_mz = 0;
+        uart_puts("[PREVIOUS SENSOR SAMPLE CORRUPTED] omitting sample\r\n");
+        continue;
+      }
+    #endif
+
     
     dBx = sample_controller.bx - prev_sample.bx;
     dBy = sample_controller.by - prev_sample.by;
@@ -556,8 +601,19 @@ static void task_controller(void *arg)
       .mz = mz,
     };
 
-    // Większe okno dla SEU, symulacja uszkodzenia w kolejce
-    vTaskDelay(pdMS_TO_TICKS(1)); 
+    #if CMD_RATE_LIMIT_ENABLE
+
+    if (previous_cmd_valid)
+    {
+        cmd_controller.mx = limit_cmd_step(cmd_controller.mx, prev_cmd.mx);
+
+        cmd_controller.my = limit_cmd_step(cmd_controller.my, prev_cmd.my);
+
+        cmd_controller.mz = limit_cmd_step(cmd_controller.mz, prev_cmd.mz);
+    }
+
+    #endif
+
     #if CLAMP_ENABLE
       // ogranicz komendy do bezpiecznego zakresu
       clamp_cmd(&cmd_controller);
@@ -568,6 +624,11 @@ static void task_controller(void *arg)
     }
 
     prev_sample = sample_controller;
+
+    #if CMD_RATE_LIMIT_ENABLE
+      prev_cmd = cmd_controller;
+      previous_cmd_valid = 1;
+    #endif
   }
 }
 
@@ -579,7 +640,7 @@ static void task_actuator(void *arg)
   while (1)
   {
     if (xQueueReceive(get_coil_cmds(), &cmd_actuator, portMAX_DELAY) != pdPASS) {continue;}
-    
+
     int32_t mx_ref, my_ref, mz_ref;
 
     // oblicz referencję
@@ -673,6 +734,10 @@ static void task_monitor(void *arg)
             uart_putdec_u32(clamp_activations);
             uart_puts("\r\n");
 
+            uart_puts("rate limit activations=");
+            uart_putdec_u32(rate_limit_activations);
+            uart_puts("\r\n");
+
 
             __asm volatile("cpsid i");
             __asm volatile("udf #0");
@@ -683,7 +748,7 @@ static void task_monitor(void *arg)
 }
 
 // RNG + SEU
-static uint32_t rng_state = 0x12345678;
+static uint32_t rng_state = SEU_SEED;
 
 static uint32_t xorshift32(void)
 {
@@ -734,14 +799,17 @@ static void task_seu(void *arg) {
     *target ^= (1 << bit);
     seu_count++;
 
-    // losowe opóźnienie 10-200ms
-    vTaskDelay((xorshift32() % 190) + 10);
+    // losowe opóźnienie 10-100ms
+    vTaskDelay((xorshift32() % 90) + 10);
   }
 }
 
 int main(void)
 {
-  uart_puts("START\n");
+  uart_puts("START\r\n");
+  uart_puts("SEED=");
+  uart_puthex_u32(SEU_SEED);
+  uart_puts("\r\n");
 
   set_sensor_samples(xQueueCreate(8, sizeof(sensor_sample)));
   set_coil_cmds(xQueueCreate(8, sizeof(coil_cmd)));
