@@ -23,6 +23,7 @@ all: $(TARGET).elf $(TARGET).bin
 $(TARGET).elf: $(OBJS)
 	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) -o $@
 	$(SIZE) $@ > $(TARGET).size
+	$(NM) -n $@ | grep -E '_sseu|_eseu' > $(TARGET).seu_size
 
 $(TARGET).bin: $(TARGET).elf
 	$(OBJCOPY) -O binary $< $@
@@ -31,7 +32,7 @@ $(TARGET).bin: $(TARGET).elf
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o *.elf *.bin *.size
+	rm -f *.o *.elf *.bin *.size *.seu_size
 
 run:
 	$(QEMU)	-M lm3s6965evb -kernel $(TARGET).bin -nographic
@@ -55,6 +56,7 @@ experiments:
 			$(MAKE) clean; \
 			$(MAKE) EXP=$$EXP SEU_SEED=$$SEED; \
 			cp $(TARGET).size $(LOGS_DIR)/$$SERIES/$$EXP.size; \
+			cp $(TARGET).seu_size $(LOGS_DIR)/$$SERIES/$$EXP.seu_size; \
 			$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic | tee $(LOGS_DIR)/$$SERIES/$$EXP.log; \
 		done; \
 		i=$$((i + 1)); \

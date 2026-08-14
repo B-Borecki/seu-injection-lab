@@ -26,14 +26,6 @@
   #define QUEUE_PROTECT_ENABLE 1
   #define CLAMP_ENABLE 1
   #define SENSOR_PREV_CRC_ENABLE 1
-#elif defined(EXPERIMENT_CMD_RATE_LIMIT)
-  #define SEU_ENABLE 1
-  #define QUEUE_PROTECT_ENABLE 1
-  #define SEQ_TMR_ENABLE 1
-  #define SENSOR_CRC_ENABLE 1
-  #define CLAMP_ENABLE 1
-  #define SENSOR_PREV_CRC_ENABLE 1
-  #define CMD_RATE_LIMIT_ENABLE 1
 #elif defined(EXPERIMENT_DATA_BSS)
   #define SEU_IN_DATA_AND_BSS 1
   #define SEU_ENABLE 1
@@ -58,9 +50,6 @@
 #ifndef CLAMP_ENABLE
   #define CLAMP_ENABLE 0
 #endif
-#ifndef CMD_RATE_LIMIT_ENABLE
-  #define CMD_RATE_LIMIT_ENABLE 0
-#endif
 #ifndef SEU_IN_DATA_AND_BSS
   #define SEU_IN_DATA_AND_BSS 0
 #endif
@@ -75,7 +64,7 @@
 #include "queue.h"
 #include "utils.h"
 
-#define MAX_SEQ  10000
+#define MAX_SEQ  1000
 #define K  8
 #define CMD_M_MAX  2500
 #define CMD_MAX_STEP 1000
@@ -161,18 +150,10 @@ static int32_t my;
 __attribute__((section(".seu_section")))
 static int32_t mz;
 
-#if CMD_RATE_LIMIT_ENABLE
-__attribute__((section(".seu_section")))
-static coil_cmd prev_cmd;
-__attribute__((section(".seu_section")))
-static uint8_t previous_cmd_valid;
-#endif
-
 // zmienne do statystyk i referencji
 static volatile uint32_t sample_count = 0;
 static volatile uint32_t error_count = 0;
-static volatile uint32_t max_error = 0;
-static volatile int32_t seq_prev = -1;
+static volatile uint64_t max_error = 0;
 static volatile uint32_t omitted_samples = 0;
 static volatile uint32_t good_samples = 0;
 static volatile uint32_t propagation_count = 0;
@@ -181,13 +162,12 @@ static volatile uint32_t expected_seq = 0;
 static volatile uint32_t tmr_corrections = 0;
 static volatile uint32_t dmr_corrections = 0;
 static volatile uint32_t clamp_activations = 0;
-static volatile uint32_t rate_limit_activations = 0;
 static volatile uint32_t detected_errors = 0;
 // propagacja wykorzystywana do zaburzania kolejnych próbek
 static volatile int32_t propagation_mx = 0;
 static volatile int32_t propagation_my = 0;
 static volatile int32_t propagation_mz = 0;
-
+static volatile int32_t propagation_active = 0;
 #if QUEUE_PROTECT_ENABLE || SENSOR_CRC_ENABLE
 
 static uint8_t crc8(uint8_t *data, int len)
@@ -333,6 +313,8 @@ static uint32_t get_seq(void)
 
   if (a == b)
   {
+    seq_tmr[1] = a;
+    seq_tmr[2] = a;
     detected_errors++;
     tmr_corrections++;
     return a;
@@ -340,6 +322,8 @@ static uint32_t get_seq(void)
 
   if (a == c)
   {
+    seq_tmr[1] = a;
+    seq_tmr[2] = a;
     detected_errors++;
     tmr_corrections++;
     return a;
@@ -347,6 +331,8 @@ static uint32_t get_seq(void)
 
   if (b == c)
   {
+    seq_tmr[0] = b;
+    seq_tmr[2] = b;
     detected_errors++;
     tmr_corrections++;
     return b;
@@ -425,28 +411,6 @@ static void clamp_cmd(coil_cmd *cmd)
 
 #endif
 
-#if CMD_RATE_LIMIT_ENABLE
-
-static int32_t limit_cmd_step(int32_t current, int32_t previous)
-{
-  int32_t delta = current - previous;
-
-  if (delta > CMD_MAX_STEP)
-  {
-      rate_limit_activations++;
-      return previous + CMD_MAX_STEP;
-  }
-
-  if (delta < -CMD_MAX_STEP)
-  {
-      rate_limit_activations++;
-      return previous - CMD_MAX_STEP;
-  }
-
-  return current;
-}
-
-#endif
 
 // Obliczenia referencyjne, służą do badania zaburzeń w symulowanym układzie
 static void compute_reference(uint32_t seq, int32_t seq_prev, int32_t *mx_ref, int32_t *my_ref, int32_t *mz_ref)
@@ -459,7 +423,7 @@ static void compute_reference(uint32_t seq, int32_t seq_prev, int32_t *mx_ref, i
   int32_t dy  = (int32_t)((seq >> 1) & 0xFFu) - 128;
   int32_t dz  = (int32_t)((seq >> 2) & 0xFFu) - 128;
 
-  int32_t variation = (500 * sin_table[seq % 360]) / 1000;
+  int32_t variation = (500 * sin_table[seq % 356]) / 1000;
 
   int32_t bx  = BX + dx + variation;
   int32_t by  = BY + dy + variation / 2;
@@ -469,7 +433,7 @@ static void compute_reference(uint32_t seq, int32_t seq_prev, int32_t *mx_ref, i
   int32_t dyp = (int32_t)((seq_prev >> 1) & 0xFFu) - 128;
   int32_t dzp = (int32_t)((seq_prev >> 2) & 0xFFu) - 128;
 
-  int32_t variation_prev = (500 * sin_table[seq_prev % 360]) / 1000;
+  int32_t variation_prev = (500 * sin_table[seq_prev % 356]) / 1000;
 
   int32_t bxp = BX + dxp + variation_prev;
   int32_t byp = BY + dyp + variation_prev / 2;
@@ -508,13 +472,7 @@ static void task_sensor(void *arg)
     int32_t dz = (int32_t)((seq >> 2) & 0xFF) - 128;
     
     // sinusoidalna zmiana, szum
-    int32_t variation = (500 * sin_table[seq % 360]) / 1000;
-    
-    // propagacja błędu z poprzedniej próbki
-    if (propagation_mx + propagation_my + propagation_mz != 0)
-    {
-      propagation_count++;
-    }
+    int32_t variation = (500 * sin_table[seq % 356]) / 1000;
     
     sample_sensor = (sensor_sample)
     {
@@ -564,6 +522,7 @@ static void task_controller(void *arg)
         propagation_mx = 0;
         propagation_my = 0;
         propagation_mz = 0;
+        propagation_active = 0;
         uart_puts("[SENSOR SAMPLE CORRUPTED] omitting sample\r\n");
         continue;
       }
@@ -578,12 +537,12 @@ static void task_controller(void *arg)
         propagation_mx = 0;
         propagation_my = 0;
         propagation_mz = 0;
+        propagation_active = 0;
         uart_puts("[PREVIOUS SENSOR SAMPLE CORRUPTED] omitting sample\r\n");
         continue;
       }
     #endif
 
-    
     dBx = sample_controller.bx - prev_sample.bx;
     dBy = sample_controller.by - prev_sample.by;
     dBz = sample_controller.bz - prev_sample.bz;
@@ -601,19 +560,6 @@ static void task_controller(void *arg)
       .mz = mz,
     };
 
-    #if CMD_RATE_LIMIT_ENABLE
-
-    if (previous_cmd_valid)
-    {
-        cmd_controller.mx = limit_cmd_step(cmd_controller.mx, prev_cmd.mx);
-
-        cmd_controller.my = limit_cmd_step(cmd_controller.my, prev_cmd.my);
-
-        cmd_controller.mz = limit_cmd_step(cmd_controller.mz, prev_cmd.mz);
-    }
-
-    #endif
-
     #if CLAMP_ENABLE
       // ogranicz komendy do bezpiecznego zakresu
       clamp_cmd(&cmd_controller);
@@ -624,11 +570,6 @@ static void task_controller(void *arg)
     }
 
     prev_sample = sample_controller;
-
-    #if CMD_RATE_LIMIT_ENABLE
-      prev_cmd = cmd_controller;
-      previous_cmd_valid = 1;
-    #endif
   }
 }
 
@@ -647,13 +588,26 @@ static void task_actuator(void *arg)
     compute_reference(expected_seq, cmd_actuator.prev_seq, &mx_ref, &my_ref, &mz_ref);
 
     // błąd = suma bezwzględnych różnic na każdej osi
-    uint32_t err = u32_abs_i32(cmd_actuator.mx - mx_ref) + u32_abs_i32(cmd_actuator.my - my_ref) + u32_abs_i32(cmd_actuator.mz - mz_ref);
+    int64_t ex = (int64_t)cmd_actuator.mx - (int64_t)mx_ref;
+    int64_t ey = (int64_t)cmd_actuator.my - (int64_t)my_ref;
+    int64_t ez = (int64_t)cmd_actuator.mz - (int64_t)mz_ref;
+    if (ex < 0) ex = -ex;
+    if (ey < 0) ey = -ey;
+    if (ez < 0) ez = -ez;
+
+    uint64_t err = (uint64_t)(ex < 0 ? -ex : ex) + (uint64_t)(ey < 0 ? -ey : ey) + (uint64_t)(ez < 0 ? -ez : ez);
 
     if (err > 0)
     {
       error_count++;
 
       if (err > max_error) max_error = err;
+
+      if (propagation_active)
+      {
+          propagation_count++;
+      }
+
 
       uart_puts("[ERR] seq=");
       uart_putdec_u32(cmd_actuator.seq);
@@ -662,9 +616,11 @@ static void task_actuator(void *arg)
       uart_puts("\r\n");
 
       // propaguj błąd z powrotem do sensora
-      propagation_mx = (cmd_actuator.mx - mx_ref) / 100;
-      propagation_my = (cmd_actuator.my - my_ref) / 100;
-      propagation_mz = (cmd_actuator.mz - mz_ref) / 100;
+      propagation_mx = (cmd_actuator.mx - mx_ref) / 50;
+      propagation_my = (cmd_actuator.my - my_ref) / 50;
+      propagation_mz = (cmd_actuator.mz - mz_ref) / 50;
+
+      propagation_active = (propagation_mx != 0 || propagation_my != 0 || propagation_mz != 0);
     }
     else
     {
@@ -672,6 +628,7 @@ static void task_actuator(void *arg)
       propagation_mx = 0;
       propagation_my = 0;
       propagation_mz = 0;
+      propagation_active = 0;
     }
   }
 }
@@ -707,7 +664,7 @@ static void task_monitor(void *arg)
             uart_puts("\r\n");
 
             uart_puts("max_error=0x");
-            uart_puthex_u32(max_error);
+            uart_puthex_u64(max_error);
             uart_puts("\r\n");
 
             uart_puts("propagations=");
@@ -733,11 +690,6 @@ static void task_monitor(void *arg)
             uart_puts("clamp_activations=");
             uart_putdec_u32(clamp_activations);
             uart_puts("\r\n");
-
-            uart_puts("rate limit activations=");
-            uart_putdec_u32(rate_limit_activations);
-            uart_puts("\r\n");
-
 
             __asm volatile("cpsid i");
             __asm volatile("udf #0");

@@ -150,15 +150,17 @@ def print_detection_statistics(all_stats):
 def print_size_table():
     print()
     print("PROGRAM MEMORY AND RAM USAGE")
-    print("-" * 80)
+    print("-" * 100)
     header = (
         f"{'Experiment':<18}"
         f"{'Flash [B]':>22}"
-        f"{'RAM [B]':>20}")
+        f"{'RAM [B]':>20}"
+        f"{'.seu_section':>20}")
     print(header)
-    print("-" * 80)
+    print("-" * 100)
     for experiment in EXPERIMENTS:
         size_path = LOGS_DIR/"exp_05"/f"{experiment}.size"
+        seu_size_path = LOGS_DIR/"exp_05"/f"{experiment}.seu_size"
         lines = size_path.read_text().strip().splitlines()
         values = lines[1].split()
         text = int(values[0])
@@ -166,11 +168,19 @@ def print_size_table():
         bss = int(values[2])
         flash = text + data
         ram = data + bss
+        seu_lines = seu_size_path.read_text().strip().splitlines()
+        addresses = {}
+        for line in seu_lines:
+            fields = line.split()
+            if len(fields) >= 3 and fields[2] in ("_sseu", "_eseu"):
+                addresses[fields[2]] = int(fields[0], 16)
+            seu_size = addresses["_eseu"] - addresses["_sseu"]
         print(
             f"{experiment:<18}"
             f"{flash:>22}"
-            f"{ram:>20}")
-    print("-" * 80)
+            f"{ram:>20}"
+            f"{seu_size:>18}")
+    print("-" * 100)
 
 
 def main():
