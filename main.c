@@ -63,6 +63,7 @@
 #include "task.h"
 #include "queue.h"
 #include "utils.h"
+#include "semphr.h"
 
 #define MAX_SEQ  500
 #define K  8
@@ -163,18 +164,13 @@ static volatile uint32_t tmr_corrections = 0;
 static volatile uint32_t dmr_corrections = 0;
 static volatile uint32_t clamp_activations = 0;
 static volatile uint32_t detected_errors = 0;
-// statystyki opóźnienia
-static volatile uint32_t latency_sum_ticks = 0;
-static volatile uint32_t latency_count = 0;
-static volatile uint32_t latency_max_ticks = 0;
-
-// timestamp rozpoczęcia przetwarzania próbki
-static volatile TickType_t processing_start_tick = 0;
 // propagacja wykorzystywana do zaburzania kolejnych próbek
 static volatile int32_t propagation_mx = 0;
 static volatile int32_t propagation_my = 0;
 static volatile int32_t propagation_mz = 0;
 static volatile int32_t propagation_active = 0;
+
+static SemaphoreHandle_t actuator_done;
 
 #if QUEUE_PROTECT_ENABLE || SENSOR_CRC_ENABLE
 
@@ -503,8 +499,9 @@ static void task_sensor(void *arg)
     
 
     sample_count++;
-    vTaskDelay(pdMS_TO_TICKS(10));
+    xSemaphoreTake(actuator_done, portMAX_DELAY);
     inc_seq();
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 
@@ -518,6 +515,7 @@ static void task_controller(void *arg)
   {
     prev_sample = sample_controller;
     good_samples++;
+    xSemaphoreGive(actuator_done);
   }
 
   while (1)
@@ -535,6 +533,7 @@ static void task_controller(void *arg)
         propagation_mz = 0;
         propagation_active = 0;
         uart_puts("[SENSOR SAMPLE CORRUPTED] omitting sample\r\n");
+        xSemaphoreGive(actuator_done);
         continue;
       }
     #endif
@@ -550,6 +549,7 @@ static void task_controller(void *arg)
         propagation_mz = 0;
         propagation_active = 0;
         uart_puts("[PREVIOUS SENSOR SAMPLE CORRUPTED] omitting sample\r\n");
+        xSemaphoreGive(actuator_done);
         continue;
       }
     #endif
@@ -641,6 +641,8 @@ static void task_actuator(void *arg)
       propagation_mz = 0;
       propagation_active = 0;
     }
+
+    xSemaphoreGive(actuator_done);
   }
 }
 
@@ -710,6 +712,7 @@ static void task_monitor(void *arg)
     }
 }
 
+#if SEU_ENABLE
 // RNG + SEU
 static uint32_t rng_state = SEU_SEED;
 
@@ -766,6 +769,8 @@ static void task_seu(void *arg) {
     vTaskDelay((xorshift32() % 90) + 10);
   }
 }
+#endif
+
 int main(void)
 {
   uart_puts("START\r\n");
@@ -775,6 +780,7 @@ int main(void)
 
   set_sensor_samples(xQueueCreate(8, sizeof(sensor_sample)));
   set_coil_cmds(xQueueCreate(8, sizeof(coil_cmd)));
+  actuator_done = xSemaphoreCreateBinary();
 
   xTaskCreate(task_sensor, "sensor", 256, NULL, 2, NULL);
   xTaskCreate(task_controller, "controller", 256, NULL, 2, NULL);
