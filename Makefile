@@ -32,22 +32,25 @@ $(TARGET).bin: $(TARGET).elf
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o *.elf *.bin *.size *.seu_size
+	rm -f *.o *.elf *.bin *.size *.seu_size *.log
 
 run:
-	$(QEMU)	-M lm3s6965evb -kernel $(TARGET).bin -nographic
+	$(QEMU) -M lm3s6965evb -kernel $(TARGET).elf -nographic -d in_asm,exec,nochain -D exec.log
 
 EXPERIMENTS := QUEUE_PROTECT SEQ_TMR CMD_CLAMP SENSOR_CRC FULL
 
 SEEDS := 0x12345678 0x24688642 0x11111111 0x76893011 0x3579753 0x67676767 0x77761234 0x99763333 0x87654321 0x09322003
 
+MAX_SEQ := 10000
+
 experiments:
 	mkdir -p $(LOGS_DIR)
-
 	@i=1; \
 	for SEED in $(SEEDS); do \
 		SERIES=$$(printf "exp_%02d" $$i); \
+		echo ""; \
 		echo "Running $$SERIES with seed=$$SEED"; \
+		echo ""; \
 		mkdir -p $(LOGS_DIR)/$$SERIES; \
 		for EXP in $(EXPERIMENTS); do \
 			echo ""; \
@@ -57,7 +60,9 @@ experiments:
 			$(MAKE) EXP=$$EXP SEU_SEED=$$SEED; \
 			cp $(TARGET).size $(LOGS_DIR)/$$SERIES/$$EXP.size; \
 			cp $(TARGET).seu_size $(LOGS_DIR)/$$SERIES/$$EXP.seu_size; \
-			$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic | tee $(LOGS_DIR)/$$SERIES/$$EXP.log; \
+			$(QEMU) -M lm3s6965evb -kernel $(TARGET).elf -nographic	-d in_asm,exec,nochain -D exec.log; \
+			python3 count_instructions.py exec.log $(TARGET).elf $(MAX_SEQ) > $(LOGS_DIR)/$$SERIES/$$EXP.instr; \
+			rm exec.log; \
 		done; \
 		i=$$((i + 1)); \
 	done

@@ -64,7 +64,7 @@
 #include "queue.h"
 #include "utils.h"
 
-#define MAX_SEQ  1000
+#define MAX_SEQ  500
 #define K  8
 #define CMD_M_MAX  2500
 #define CMD_MAX_STEP 1000
@@ -163,11 +163,19 @@ static volatile uint32_t tmr_corrections = 0;
 static volatile uint32_t dmr_corrections = 0;
 static volatile uint32_t clamp_activations = 0;
 static volatile uint32_t detected_errors = 0;
+// statystyki opóźnienia
+static volatile uint32_t latency_sum_ticks = 0;
+static volatile uint32_t latency_count = 0;
+static volatile uint32_t latency_max_ticks = 0;
+
+// timestamp rozpoczęcia przetwarzania próbki
+static volatile TickType_t processing_start_tick = 0;
 // propagacja wykorzystywana do zaburzania kolejnych próbek
 static volatile int32_t propagation_mx = 0;
 static volatile int32_t propagation_my = 0;
 static volatile int32_t propagation_mz = 0;
 static volatile int32_t propagation_active = 0;
+
 #if QUEUE_PROTECT_ENABLE || SENSOR_CRC_ENABLE
 
 static uint8_t crc8(uint8_t *data, int len)
@@ -456,7 +464,7 @@ static void compute_reference(uint32_t seq, int32_t seq_prev, int32_t *mx_ref, i
 static void task_sensor(void *arg)
 {
   (void)arg;
-  
+
   // wartości bazowe czujnika
   const int32_t BX = 20000;
   const int32_t BY = -5000;
@@ -481,15 +489,18 @@ static void task_sensor(void *arg)
       .by  = BY + dy + variation / 2 + propagation_my,
       .bz  = BZ + dz + variation / 3 + propagation_mz,
     };
+    
 
     #if SENSOR_CRC_ENABLE
         // oblicz crc przed wysłaniem próbki
         sample_sensor.crc = crc8_sensor(&sample_sensor);
     #endif
+
     
     if (xQueueSend(get_sensor_samples(), &sample_sensor, 0) != pdPASS) {
       uart_puts("[SAMPLE QUEUE FULL]\r\n");
     }
+    
 
     sample_count++;
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -581,7 +592,7 @@ static void task_actuator(void *arg)
   while (1)
   {
     if (xQueueReceive(get_coil_cmds(), &cmd_actuator, portMAX_DELAY) != pdPASS) {continue;}
-
+  
     int32_t mx_ref, my_ref, mz_ref;
 
     // oblicz referencję
@@ -755,7 +766,6 @@ static void task_seu(void *arg) {
     vTaskDelay((xorshift32() % 90) + 10);
   }
 }
-
 int main(void)
 {
   uart_puts("START\r\n");
@@ -773,9 +783,9 @@ int main(void)
 
 #if SEU_ENABLE
   xTaskCreate(task_seu, "seu", 256, NULL, 3, NULL);
-
 #endif
 
   vTaskStartScheduler();
+
   while (1) {}
 }
