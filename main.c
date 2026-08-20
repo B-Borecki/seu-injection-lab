@@ -69,7 +69,7 @@
 #include "semphr.h"
 
 #ifndef MAX_SEQ
-#define MAX_SEQ 10000
+#define MAX_SEQ 1000
 #endif
 #define K  8
 #define CMD_M_MAX  2500

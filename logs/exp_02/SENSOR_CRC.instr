@@ -1,0 +1,15 @@
+---------------------------
+Dynamic instruction count
+---------------------------
+Experiment       : SENSOR_CRC
+Total            : 75495025
+SIFT             : 18174980
+Total/sample     : 37747.5125
+SIFT/sample      : 9087.49
+SIFT/Total       : 24.07%
+---------------------------
+
+Technical checks
+Unique TBs            : 580
+Trace executions      : 16595986
+Unknown TB executions : 0

@@ -12,7 +12,7 @@ OBJS = $(SRCS:.c=.o)
 
 SEU_SEED ?= 0x12345678
 
-MAX_SEQ ?= 100
+MAX_SEQ ?= 2000
 
 CFLAGS  = -mcpu=cortex-m3 -mthumb -O0 -g -ffreestanding -nostdlib -I. -IFreeRTOS/Source/include -IFreeRTOS/Source/portable/GCC/ARM_CM3 -Wall -Wextra -DEXPERIMENT_$(EXP) -DSEU_SEED=$(SEU_SEED) -DMAX_SEQ=$(MAX_SEQ)
 

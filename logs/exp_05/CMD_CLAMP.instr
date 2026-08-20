@@ -1,0 +1,15 @@
+---------------------------
+Dynamic instruction count
+---------------------------
+Experiment       : CMD_CLAMP
+Total            : 58012390
+SIFT             : 9537995
+Total/sample     : 29006.195
+SIFT/sample      : 4768.9975
+SIFT/Total       : 16.44%
+---------------------------
+
+Technical checks
+Unique TBs            : 574
+Trace executions      : 12776065
+Unknown TB executions : 0
