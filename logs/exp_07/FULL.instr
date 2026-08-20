@@ -1,0 +1,15 @@
+---------------------------
+Dynamic instruction count
+---------------------------
+Experiment       : FULL
+Total            : 79258655
+SIFT             : 22314869
+Total/sample     : 39629.3275
+SIFT/sample      : 11157.4345
+SIFT/Total       : 28.15%
+---------------------------
+
+Technical checks
+Unique TBs            : 580
+Trace executions      : 17263420
+Unknown TB executions : 0

@@ -1,0 +1,15 @@
+---------------------------
+Dynamic instruction count
+---------------------------
+Experiment       : SEQ_TMR
+Total            : 59273368
+SIFT             : 9445995
+Total/sample     : 29636.684
+SIFT/sample      : 4722.9975
+SIFT/Total       : 15.94%
+---------------------------
+
+Technical checks
+Unique TBs            : 562
+Trace executions      : 13110752
+Unknown TB executions : 0

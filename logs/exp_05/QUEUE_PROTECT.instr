@@ -1,0 +1,15 @@
+---------------------------
+Dynamic instruction count
+---------------------------
+Experiment       : QUEUE_PROTECT
+Total            : 60002799
+SIFT             : 9293038
+Total/sample     : 30001.3995
+SIFT/sample      : 4646.519
+SIFT/Total       : 15.49%
+---------------------------
+
+Technical checks
+Unique TBs            : 546
+Trace executions      : 13012118
+Unknown TB executions : 0

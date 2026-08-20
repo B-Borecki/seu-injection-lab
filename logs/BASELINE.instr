@@ -1,0 +1,15 @@
+---------------------------
+Dynamic instruction count
+---------------------------
+Experiment       : BASELINE
+Total            : 47766336
+SIFT             : 0
+Total/sample     : 23883.168
+SIFT/sample      : 0.0
+SIFT/Total       : 0.00%
+---------------------------
+
+Technical checks
+Unique TBs            : 466
+Trace executions      : 14260802
+Unknown TB executions : 0

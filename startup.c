@@ -65,6 +65,12 @@ static void init_data_bss(void)
   {
     *bss++ = 0u;
   }
+  
+  uint32_t *seu = &_sseu;
+  while (seu < &_eseu)
+  {
+      *seu++ = 0u;
+  }
 }
 
 // Handler resetu: przygotuj RAM, uruchom main()
