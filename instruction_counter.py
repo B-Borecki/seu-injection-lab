@@ -77,6 +77,7 @@ SIFT_GROUPS = {
 
 log_file = sys.argv[1]
 experiment = sys.argv[2]
+samples = int(sys.argv[3])
 
 instruction_regex = re.compile(r"^0x([0-9a-fA-F]+):")
 in_regex = re.compile(r"^IN:\s*(.*?)\s*$")
@@ -142,7 +143,6 @@ print("---------------------------")
 print(f"Experiment       : {experiment}")
 print(f"Total            : {total_instructions}")
 print(f"SIFT             : {sift_instructions}")
-samples = 500
 print(f"Total/sample     : {total_instructions / samples}")
 print(f"SIFT/sample      : {sift_instructions / samples}")
 sift_percentage = 100.0 * sift_instructions / total_instructions

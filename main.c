@@ -50,6 +50,9 @@
 #ifndef CLAMP_ENABLE
   #define CLAMP_ENABLE 0
 #endif
+#ifndef SENSOR_PREV_CRC_ENABLE
+  #define SENSOR_PREV_CRC_ENABLE 0
+#endif
 #ifndef SEU_IN_DATA_AND_BSS
   #define SEU_IN_DATA_AND_BSS 0
 #endif
@@ -65,7 +68,9 @@
 #include "utils.h"
 #include "semphr.h"
 
-#define MAX_SEQ  500
+#ifndef MAX_SEQ
+#define MAX_SEQ 10000
+#endif
 #define K  8
 #define CMD_M_MAX  2500
 #define CMD_MAX_STEP 1000
@@ -163,14 +168,15 @@ static volatile uint32_t expected_seq = 0;
 static volatile uint32_t tmr_corrections = 0;
 static volatile uint32_t dmr_corrections = 0;
 static volatile uint32_t clamp_activations = 0;
-static volatile uint32_t detected_errors = 0;
+static volatile uint32_t crc_detections = 0;
+static volatile uint32_t detected_disturbances = 0;
 // propagacja wykorzystywana do zaburzania kolejnych próbek
 static volatile int32_t propagation_mx = 0;
 static volatile int32_t propagation_my = 0;
 static volatile int32_t propagation_mz = 0;
 static volatile int32_t propagation_active = 0;
 
-static SemaphoreHandle_t actuator_done;
+static SemaphoreHandle_t sample_completed;
 
 #if QUEUE_PROTECT_ENABLE || SENSOR_CRC_ENABLE
 
@@ -243,7 +249,7 @@ static uint8_t crc8_sensor(sensor_sample *s)
     
     if (valid_primary)
     {
-      detected_errors++;
+      detected_disturbances++;
       dmr_corrections++;
       pq->backup_ptr = primary_ptr;
       pq->backup_crc = primary_crc;
@@ -254,7 +260,7 @@ static uint8_t crc8_sensor(sensor_sample *s)
     }
     else if (valid_backup)
     {
-      detected_errors++;
+      detected_disturbances++;
       dmr_corrections++;
       pq->primary_ptr = backup_ptr;
       pq->primary_crc = backup_crc;
@@ -319,7 +325,7 @@ static uint32_t get_seq(void)
   {
     seq_tmr[1] = a;
     seq_tmr[2] = a;
-    detected_errors++;
+    detected_disturbances++;
     tmr_corrections++;
     return a;
   }
@@ -328,7 +334,7 @@ static uint32_t get_seq(void)
   {
     seq_tmr[1] = a;
     seq_tmr[2] = a;
-    detected_errors++;
+    detected_disturbances++;
     tmr_corrections++;
     return a;
   }
@@ -337,7 +343,7 @@ static uint32_t get_seq(void)
   {
     seq_tmr[0] = b;
     seq_tmr[2] = b;
-    detected_errors++;
+    detected_disturbances++;
     tmr_corrections++;
     return b;
   }
@@ -409,7 +415,7 @@ static void clamp_cmd(coil_cmd *cmd)
   }
 
   if (detection) {
-    detected_errors++;
+    detected_disturbances++;
   }
 }
 
@@ -486,20 +492,15 @@ static void task_sensor(void *arg)
       .bz  = BZ + dz + variation / 3 + propagation_mz,
     };
     
-
     #if SENSOR_CRC_ENABLE
         // oblicz crc przed wysłaniem próbki
         sample_sensor.crc = crc8_sensor(&sample_sensor);
     #endif
-
     
-    if (xQueueSend(get_sensor_samples(), &sample_sensor, 0) != pdPASS) {
-      uart_puts("[SAMPLE QUEUE FULL]\r\n");
-    }
-    
+    xQueueSend(get_sensor_samples(), &sample_sensor, portMAX_DELAY);
 
     sample_count++;
-    xSemaphoreTake(actuator_done, portMAX_DELAY);
+    xSemaphoreTake(sample_completed, portMAX_DELAY);
     inc_seq();
     vTaskDelay(pdMS_TO_TICKS(10));
   }
@@ -515,7 +516,7 @@ static void task_controller(void *arg)
   {
     prev_sample = sample_controller;
     good_samples++;
-    xSemaphoreGive(actuator_done);
+    xSemaphoreGive(sample_completed);
   }
 
   while (1)
@@ -526,14 +527,15 @@ static void task_controller(void *arg)
       // weryfikacja poprawności próbki
       if (sample_controller.crc != crc8_sensor(&sample_controller))
       {
-        detected_errors++;
+        crc_detections++;
+        detected_disturbances++;
         omitted_samples++;
         propagation_mx = 0;
         propagation_my = 0;
         propagation_mz = 0;
         propagation_active = 0;
         uart_puts("[SENSOR SAMPLE CORRUPTED] omitting sample\r\n");
-        xSemaphoreGive(actuator_done);
+        xSemaphoreGive(sample_completed);
         continue;
       }
     #endif
@@ -542,14 +544,15 @@ static void task_controller(void *arg)
       if (prev_sample.crc != crc8_sensor(&prev_sample))
       {
         prev_sample = sample_controller;
-        detected_errors++;
+        crc_detections++;
+        detected_disturbances++;
         omitted_samples++;
         propagation_mx = 0;
         propagation_my = 0;
         propagation_mz = 0;
         propagation_active = 0;
         uart_puts("[PREVIOUS SENSOR SAMPLE CORRUPTED] omitting sample\r\n");
-        xSemaphoreGive(actuator_done);
+        xSemaphoreGive(sample_completed);
         continue;
       }
     #endif
@@ -576,9 +579,7 @@ static void task_controller(void *arg)
       clamp_cmd(&cmd_controller);
     #endif
 
-    if (xQueueSend(get_coil_cmds(), &cmd_controller, 0) != pdPASS) {
-      uart_puts("[CMD QUEUE FULL]\r\n");
-    }
+    xQueueSend(get_coil_cmds(), &cmd_controller, portMAX_DELAY);
 
     prev_sample = sample_controller;
   }
@@ -606,13 +607,15 @@ static void task_actuator(void *arg)
     if (ey < 0) ey = -ey;
     if (ez < 0) ez = -ez;
 
-    uint64_t err = (uint64_t)(ex < 0 ? -ex : ex) + (uint64_t)(ey < 0 ? -ey : ey) + (uint64_t)(ez < 0 ? -ez : ez);
+    uint64_t err = (uint64_t)ex + (uint64_t)ey + (uint64_t)ez;
 
     if (err > 0)
     {
       error_count++;
 
-      if (err > max_error) max_error = err;
+      if (err > max_error) {
+        max_error = err;
+      }
 
       if (propagation_active)
       {
@@ -642,74 +645,64 @@ static void task_actuator(void *arg)
       propagation_active = 0;
     }
 
-    xSemaphoreGive(actuator_done);
-  }
-}
-
-static void task_monitor(void *arg)
-{
-    (void)arg;
-
-    while (1)
+    if (sample_count >= MAX_SEQ)
     {
-        if (sample_count >= MAX_SEQ)
-        {
-            uart_puts("[END]\r\n");
+        uart_puts("[END]\r\n");
 
-            uart_puts("samples=");
-            uart_putdec_u32(sample_count);
-            uart_puts("\r\n");
+        uart_puts("samples=");
+        uart_putdec_u32(sample_count);
+        uart_puts("\r\n");
 
-            uart_puts("SEUs=");
-            uart_putdec_u32(seu_count);
-            uart_puts("\r\n");
+        uart_puts("SEUs=");
+        uart_putdec_u32(seu_count);
+        uart_puts("\r\n");
 
-            uart_puts("good samples=");
-            uart_putdec_u32(good_samples);
-            uart_puts("\r\n");
+        uart_puts("good samples=");
+        uart_putdec_u32(good_samples);
+        uart_puts("\r\n");
 
-            uart_puts("errors=");
-            uart_putdec_u32(error_count);
-            uart_puts("\r\n");
+        uart_puts("errors=");
+        uart_putdec_u32(error_count);
+        uart_puts("\r\n");
 
-            uart_puts("samples omitted=");
-            uart_putdec_u32(omitted_samples);
-            uart_puts("\r\n");
+        uart_puts("samples omitted=");
+        uart_putdec_u32(omitted_samples);
+        uart_puts("\r\n");
 
-            uart_puts("max_error=0x");
-            uart_puthex_u64(max_error);
-            uart_puts("\r\n");
+        uart_puts("max error=0x");
+        uart_puthex_u64(max_error);
+        uart_puts("\r\n");
 
-            uart_puts("propagations=");
-            uart_putdec_u32(propagation_count);
-            uart_puts("\r\n");
+        uart_puts("propagations=");
+        uart_putdec_u32(propagation_count);
+        uart_puts("\r\n");
 
-            uart_puts("detected_errors=");
-            uart_putdec_u32(detected_errors);
-            uart_puts("\r\n");
+        uart_puts("detected disturbances=");
+        uart_putdec_u32(detected_disturbances);
+        uart_puts("\r\n");
 
-            uart_puts("tmr_corrections=");
-            uart_putdec_u32(tmr_corrections);
-            uart_puts("\r\n");
+        uart_puts("tmr corrections=");
+        uart_putdec_u32(tmr_corrections);
+        uart_puts("\r\n");
 
-            uart_puts("dmr_corrections=");
-            uart_putdec_u32(dmr_corrections);
-            uart_puts("\r\n");
+        uart_puts("dmr corrections=");
+        uart_putdec_u32(dmr_corrections);
+        uart_puts("\r\n");
 
-            uart_puts("crc detections=");
-            uart_putdec_u32(omitted_samples);
-            uart_puts("\r\n");
+        uart_puts("crc detections=");
+        uart_putdec_u32(crc_detections);
+        uart_puts("\r\n");
 
-            uart_puts("clamp_activations=");
-            uart_putdec_u32(clamp_activations);
-            uart_puts("\r\n");
+        uart_puts("clamp activations=");
+        uart_putdec_u32(clamp_activations);
+        uart_puts("\r\n");
 
-            __asm volatile("cpsid i");
-            __asm volatile("udf #0");
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(100));
+        __asm volatile("cpsid i");
+        __asm volatile("udf #0");
     }
+
+    xSemaphoreGive(sample_completed);
+  }
 }
 
 #if SEU_ENABLE
@@ -766,7 +759,7 @@ static void task_seu(void *arg) {
     seu_count++;
 
     // losowe opóźnienie 10-100ms
-    vTaskDelay((xorshift32() % 90) + 10);
+    vTaskDelay((xorshift32() % 91) + 10);
   }
 }
 #endif
@@ -780,12 +773,11 @@ int main(void)
 
   set_sensor_samples(xQueueCreate(8, sizeof(sensor_sample)));
   set_coil_cmds(xQueueCreate(8, sizeof(coil_cmd)));
-  actuator_done = xSemaphoreCreateBinary();
+  sample_completed = xSemaphoreCreateBinary();
 
   xTaskCreate(task_sensor, "sensor", 256, NULL, 2, NULL);
   xTaskCreate(task_controller, "controller", 256, NULL, 2, NULL);
   xTaskCreate(task_actuator, "actuator", 256, NULL, 2, NULL);
-  xTaskCreate(task_monitor, "monitor", 256, NULL, 4, NULL);
 
 #if SEU_ENABLE
   xTaskCreate(task_seu, "seu", 256, NULL, 3, NULL);
