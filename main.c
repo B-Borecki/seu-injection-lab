@@ -162,7 +162,6 @@ static volatile uint32_t error_count = 0;
 static volatile uint64_t max_error = 0;
 static volatile uint32_t omitted_samples = 0;
 static volatile uint32_t good_samples = 0;
-static volatile uint32_t propagation_count = 0;
 static volatile uint32_t seu_count = 0;
 static volatile uint32_t expected_seq = 0;
 static volatile uint32_t tmr_corrections = 0;
@@ -170,11 +169,6 @@ static volatile uint32_t dmr_corrections = 0;
 static volatile uint32_t clamp_activations = 0;
 static volatile uint32_t crc_detections = 0;
 static volatile uint32_t detected_disturbances = 0;
-// propagacja wykorzystywana do zaburzania kolejnych próbek
-static volatile int32_t propagation_mx = 0;
-static volatile int32_t propagation_my = 0;
-static volatile int32_t propagation_mz = 0;
-static volatile int32_t propagation_active = 0;
 
 static SemaphoreHandle_t sample_completed;
 
@@ -487,9 +481,9 @@ static void task_sensor(void *arg)
     sample_sensor = (sensor_sample)
     {
       .seq = seq,
-      .bx  = BX + dx + variation + propagation_mx,
-      .by  = BY + dy + variation / 2 + propagation_my,
-      .bz  = BZ + dz + variation / 3 + propagation_mz,
+      .bx  = BX + dx + variation,
+      .by  = BY + dy + variation / 2,
+      .bz  = BZ + dz + variation / 3
     };
     
     #if SENSOR_CRC_ENABLE
@@ -530,10 +524,6 @@ static void task_controller(void *arg)
         crc_detections++;
         detected_disturbances++;
         omitted_samples++;
-        propagation_mx = 0;
-        propagation_my = 0;
-        propagation_mz = 0;
-        propagation_active = 0;
         uart_puts("[SENSOR SAMPLE CORRUPTED] omitting sample\r\n");
         xSemaphoreGive(sample_completed);
         continue;
@@ -547,10 +537,6 @@ static void task_controller(void *arg)
         crc_detections++;
         detected_disturbances++;
         omitted_samples++;
-        propagation_mx = 0;
-        propagation_my = 0;
-        propagation_mz = 0;
-        propagation_active = 0;
         uart_puts("[PREVIOUS SENSOR SAMPLE CORRUPTED] omitting sample\r\n");
         xSemaphoreGive(sample_completed);
         continue;
@@ -617,10 +603,6 @@ static void task_actuator(void *arg)
         max_error = err;
       }
 
-      if (propagation_active)
-      {
-          propagation_count++;
-      }
 
 
       uart_puts("[ERR] seq=");
@@ -628,21 +610,10 @@ static void task_actuator(void *arg)
       uart_puts(" err=");
       uart_putdec_u32(err);
       uart_puts("\r\n");
-
-      // propaguj błąd z powrotem do sensora
-      propagation_mx = (cmd_actuator.mx - mx_ref) / 50;
-      propagation_my = (cmd_actuator.my - my_ref) / 50;
-      propagation_mz = (cmd_actuator.mz - mz_ref) / 50;
-
-      propagation_active = (propagation_mx != 0 || propagation_my != 0 || propagation_mz != 0);
     }
     else
     {
       good_samples++;
-      propagation_mx = 0;
-      propagation_my = 0;
-      propagation_mz = 0;
-      propagation_active = 0;
     }
 
     if (sample_count >= MAX_SEQ)
@@ -671,10 +642,6 @@ static void task_actuator(void *arg)
 
         uart_puts("max error=0x");
         uart_puthex_u64(max_error);
-        uart_puts("\r\n");
-
-        uart_puts("propagations=");
-        uart_putdec_u32(propagation_count);
         uart_puts("\r\n");
 
         uart_puts("detected disturbances=");
