@@ -85,25 +85,27 @@ def get_baseline_instr():
 
 def print_main_table(all_stats):
     print("\nAVERAGE RESULTS FOR EACH EXPERIMENT")
-    print("-" * 110)
+    print("-" * 125)
     print(
         f"{'Experiment':<18}"
         f"{'SEU injections':>14}"
+        f"{'Samples/SEU':>16}"
         f"{'Errors':>14}"
         f"{'Propagations':>18}"
         f"{'Detected disturbances':>26}"
         f"{'Max error':>22}")
-    print("-" * 110)
+    print("-" * 125)
     for experiment in EXPERIMENTS:
         stats = all_stats[experiment]
         print(
             f"{experiment:<18}"
             f"{mean(x['SEUs'] for x in stats):>14.2f}"
+            f"{mean([x['samples']/x['SEUs'] for x in stats if x['SEUs'] > 0]):>16.2f}"
             f"{mean(x['errors'] for x in stats):>14.2f}"
             f"{mean(x['propagations'] for x in stats):>18.2f}"
             f"{mean(x['detected disturbances'] for x in stats):>26.2f}"
             f"{mean(x['max_error'] for x in stats):>22.2f}")
-    print("-" * 110)
+    print("-" * 125)
 
 
 def print_variability_statistics(all_stats):
@@ -179,16 +181,16 @@ def print_size_table(all_stats):
     seu = seu_size_from_log(LOGS_DIR/"BASELINE.seu_size")
     print(
         f"{'BASELINE':<18}"
-        f"{size['flash']:>22.2f}"
-        f"{size['ram']:>20.2f}"
-        f"{seu['seu_size']:>24.2f}")
+        f"{size['flash']:>22.0f}"
+        f"{size['ram']:>20.0f}"
+        f"{seu['seu_size']:>24.0f}")
     for experiment in EXPERIMENTS:
         stats = all_stats[experiment]
         print(
             f"{experiment:<18}"
-            f"{mean(x['flash'] for x in stats):>22.2f}"
-            f"{mean(x['ram'] for x in stats):>20.2f}"
-            f"{mean(x['seu_size'] for x in stats):>24.2f}")
+            f"{mean(x['flash'] for x in stats):>22.0f}"
+            f"{mean(x['ram'] for x in stats):>20.0f}"
+            f"{mean(x['seu_size'] for x in stats):>24.0f}")
     print("-" * 105)
 
 

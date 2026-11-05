@@ -23,7 +23,7 @@ LOGS_DIR = logs
 all: $(TARGET).elf $(TARGET).bin
 
 $(TARGET).elf: $(OBJS)
-	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) -o $@
+	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) -o $@ -lgcc
 	$(SIZE) $@ > $(TARGET).size
 	$(NM) -n $@ | grep -E '_sseu|_eseu' > $(TARGET).seu_size
 

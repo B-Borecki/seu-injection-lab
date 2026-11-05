@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <limits.h>
 
 #define UART0_BASE 0x4000C000u
 #define UARTDR     (*(volatile uint32_t *)(UART0_BASE + 0x000u))
@@ -68,12 +69,15 @@ void uart_putdec_u32(uint32_t v) {
     }
 }
 
-void uart_putdec_i32(int32_t v) {
+void uart_putdec_i32(int32_t v)
+{
     if (v < 0) {
         uart_putc('-');
-        v = -v;
+        uart_putdec_u32(u32_abs_i32(v));
     }
-    uart_putdec_u32((uint32_t)v);
+    else {
+        uart_putdec_u32((uint32_t)v);
+    }
 }
 
 void uart_puthex_u64(uint64_t v) {
@@ -85,6 +89,32 @@ void uart_puthex_u64(uint64_t v) {
   for (int i = 7; i >= 0; --i) {
     uart_putc(HEX[(v >> (i * 4)) & 0xFu]);
   }
+}
+
+void uart_putdec_u64(uint64_t v)
+{
+    if (v == 0) {
+        uart_putc('0');
+        return;
+    }
+    char buffer[20];
+    int i = 0;
+    while (v > 0) {
+        buffer[i++] = '0' + (v % 10);
+        v /= 10;
+    }
+    while (i > 0) {
+        uart_putc(buffer[--i]);
+    }
+}
+
+int32_t saturate_int32(int64_t value)
+{
+    if (value > INT32_MAX)
+        return INT32_MAX;
+    if (value < INT32_MIN)
+        return INT32_MIN;
+    return (int32_t)value;
 }
 
 const int16_t sin_table[356] = {

@@ -73,7 +73,11 @@
 #endif
 #define K  8
 #define CMD_M_MAX  2500
-#define CMD_MAX_STEP 1000
+
+#define SENSOR_MS        10
+#define SEU_START_DELAY_MS      50
+#define SEU_MIN_INTERVAL_MS     10
+#define SEU_MAX_INTERVAL_MS     100
 
 extern uint32_t _sseu;
 extern uint32_t _eseu;
@@ -144,17 +148,17 @@ static coil_cmd cmd_controller;
 __attribute__((section(".seu_section")))
 static coil_cmd cmd_actuator;
 __attribute__((section(".seu_section")))
-static int32_t dBx;
+static int32_t diff_x;
 __attribute__((section(".seu_section")))
-static int32_t dBy;
+static int32_t diff_y;
 __attribute__((section(".seu_section")))
-static int32_t dBz;
+static int32_t diff_z;
 __attribute__((section(".seu_section")))
-static int32_t mx;
+static int32_t moment_x;
 __attribute__((section(".seu_section")))
-static int32_t my;
+static int32_t moment_y;
 __attribute__((section(".seu_section")))
-static int32_t mz;
+static int32_t moment_z;
 
 // zmienne do statystyk i referencji
 static volatile uint32_t sample_count = 0;
@@ -417,7 +421,7 @@ static void clamp_cmd(coil_cmd *cmd)
 
 
 // Obliczenia referencyjne, służą do badania zaburzeń w symulowanym układzie
-static void compute_reference(uint32_t seq, int32_t seq_prev, int32_t *mx_ref, int32_t *my_ref, int32_t *mz_ref)
+static void compute_reference(uint32_t seq, uint32_t seq_prev, int32_t *mx_ref, int32_t *my_ref, int32_t *mz_ref)
 {
   const int32_t BX = 20000;
   const int32_t BY = -5000;
@@ -496,7 +500,7 @@ static void task_sensor(void *arg)
     sample_count++;
     xSemaphoreTake(sample_completed, portMAX_DELAY);
     inc_seq();
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(SENSOR_MS));
   }
 }
 
@@ -543,26 +547,25 @@ static void task_controller(void *arg)
       }
     #endif
 
-    dBx = sample_controller.bx - prev_sample.bx;
-    dBy = sample_controller.by - prev_sample.by;
-    dBz = sample_controller.bz - prev_sample.bz;
-    // moment = -K * pochodna
-    mx = -K * dBx;
-    my = -K * dBy;
-    mz = -K * dBz;
-    
+    diff_x = saturate_int32((int64_t)sample_controller.bx - prev_sample.bx);
+    diff_y = saturate_int32((int64_t)sample_controller.by - prev_sample.by);
+    diff_z = saturate_int32((int64_t)sample_controller.bz - prev_sample.bz);
+
+    moment_x = -(int64_t)K * diff_x;
+    moment_y = -(int64_t)K * diff_y;
+    moment_z = -(int64_t)K * diff_z;
+
     cmd_controller = (coil_cmd)
     {
-      .seq = sample_controller.seq,
-      .prev_seq = prev_sample.seq,
-      .mx = mx,
-      .my = my,
-      .mz = mz,
+        .seq = sample_controller.seq,
+        .prev_seq = prev_sample.seq,
+        .mx = saturate_int32(moment_x),
+        .my = saturate_int32(moment_y),
+        .mz = saturate_int32(moment_z)
     };
 
     #if CLAMP_ENABLE
-      // ogranicz komendy do bezpiecznego zakresu
-      clamp_cmd(&cmd_controller);
+        clamp_cmd(&cmd_controller);
     #endif
 
     xQueueSend(get_coil_cmds(), &cmd_controller, portMAX_DELAY);
@@ -602,18 +605,39 @@ static void task_actuator(void *arg)
       if (err > max_error) {
         max_error = err;
       }
-
-
-
+      
       uart_puts("[ERR] seq=");
       uart_putdec_u32(cmd_actuator.seq);
       uart_puts(" err=");
-      uart_putdec_u32(err);
+      uart_putdec_u64(err);
       uart_puts("\r\n");
     }
     else
     {
       good_samples++;
+    }
+
+    if (err > 1000000)
+    {
+        uart_puts("[DEBUG] mx=");
+        uart_puthex_i32(cmd_actuator.mx);
+
+        uart_puts(" my=");
+        uart_puthex_i32(cmd_actuator.my);
+
+        uart_puts(" mz=");
+        uart_puthex_i32(cmd_actuator.mz);
+
+        uart_puts(" mx_ref=");
+        uart_puthex_i32(mx_ref);
+
+        uart_puts(" my_ref=");
+        uart_puthex_i32(my_ref);
+
+        uart_puts(" mz_ref=");
+        uart_puthex_i32(mz_ref);
+
+        uart_puts("\r\n");
     }
 
     if (sample_count >= MAX_SEQ)
@@ -640,8 +664,8 @@ static void task_actuator(void *arg)
         uart_putdec_u32(omitted_samples);
         uart_puts("\r\n");
 
-        uart_puts("max error=0x");
-        uart_puthex_u64(max_error);
+        uart_puts("max error=");
+        uart_putdec_u64(max_error);
         uart_puts("\r\n");
 
         uart_puts("detected disturbances=");
@@ -691,7 +715,7 @@ static void task_seu(void *arg) {
   (void)arg;
 
   // opóźnienie startu, pierwsze próbki są poprawne
-  vTaskDelay(pdMS_TO_TICKS(50)); 
+  vTaskDelay(pdMS_TO_TICKS(SEU_START_DELAY_MS)); 
   while (1)
   {
     #if SEU_IN_DATA_AND_BSS
@@ -725,8 +749,8 @@ static void task_seu(void *arg) {
     *target ^= (1 << bit);
     seu_count++;
 
-    // losowe opóźnienie 10-100ms
-    vTaskDelay((xorshift32() % 91) + 10);
+    // losowe opóźnienie od SEU_MIN_INTERVAL_MS ms do SEU_MAX_INTERVAL_MS ms
+    vTaskDelay(pdMS_TO_TICKS(SEU_MIN_INTERVAL_MS + (xorshift32() % (SEU_MAX_INTERVAL_MS - SEU_MIN_INTERVAL_MS + 1))));
   }
 }
 #endif

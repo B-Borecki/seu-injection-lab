@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <limits.h>
 
 void *memcpy(void *dest, const void *src, unsigned int n);
 void *memset(void *dest, int val, unsigned int n);
@@ -15,5 +16,8 @@ void uart_putdec_u32(uint32_t v);
 void uart_putdec_i32(int32_t v);
 
 void uart_puthex_u64(uint64_t v);
+void uart_putdec_u64(uint64_t v);
+
+int32_t saturate_int32(int64_t value);
 
 extern const int16_t sin_table[];
