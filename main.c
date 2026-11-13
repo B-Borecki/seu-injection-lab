@@ -84,7 +84,7 @@ extern uint32_t _eseu;
 extern uint32_t _sdata;
 extern uint32_t _ebss;
 
-#if SENSOR_CRC_ENABLE
+#if SENSOR_CRC_ENABLE || SENSOR_PREV_CRC_ENABLE
   // próbka sensora z CRC
   typedef struct
   {
@@ -176,7 +176,7 @@ static volatile uint32_t detected_disturbances = 0;
 
 static SemaphoreHandle_t sample_completed;
 
-#if QUEUE_PROTECT_ENABLE || SENSOR_CRC_ENABLE
+#if QUEUE_PROTECT_ENABLE || SENSOR_CRC_ENABLE || SENSOR_PREV_CRC_ENABLE
 
 static uint8_t crc8(uint8_t *data, int len)
 {
@@ -202,7 +202,7 @@ static uint8_t crc8(uint8_t *data, int len)
 
 #endif
 
-#if SENSOR_CRC_ENABLE
+#if SENSOR_CRC_ENABLE || SENSOR_PREV_CRC_ENABLE
 
 static uint8_t crc8_sensor(sensor_sample *s)
 {
@@ -272,8 +272,7 @@ static uint8_t crc8_sensor(sensor_sample *s)
       uart_puts("[");
       uart_puts(name);
       uart_puts(" CRITICAL] both pointers corrupted!\r\n");
-      __asm volatile("udf #0");
-      return NULL;
+      qemu_exit(1);
     }
   }
   
@@ -347,9 +346,7 @@ static uint32_t get_seq(void)
   }
 
   uart_puts("[TMR FAILURE]\r\n");
-  __asm volatile("udf #0");
-
-  return 0;
+  qemu_exit(1);
 }
 
 static void inc_seq(void)
@@ -688,8 +685,7 @@ static void task_actuator(void *arg)
         uart_putdec_u32(clamp_activations);
         uart_puts("\r\n");
 
-        __asm volatile("cpsid i");
-        __asm volatile("udf #0");
+        qemu_exit(0);
     }
 
     xSemaphoreGive(sample_completed);

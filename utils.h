@@ -21,3 +21,5 @@ void uart_putdec_u64(uint64_t v);
 int32_t saturate_int32(int64_t value);
 
 extern const int16_t sin_table[];
+
+__attribute__((noreturn)) void qemu_exit(int status);

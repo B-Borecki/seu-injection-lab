@@ -137,3 +137,16 @@ const int16_t sin_table[356] = {
   -616, -602, -588, -574, -559, -545, -530, -515, -500, -485, -469, -454, -438, -423, -407, -391, -375, -358, -342, -326,
   -309, -292, -276, -259, -242, -225, -208, -191, -174, -156, -139, -122, -105, -87, -70, -52, -35, -17
 };
+
+__attribute__((noreturn))
+void qemu_exit(int status)
+{
+    uint32_t args[2] = {0x20026, (uint32_t)status};
+
+    register uint32_t r0 __asm("r0") = 0x20;
+    register uint32_t *r1 __asm("r1") = args;
+
+    __asm volatile("bkpt #0xAB" :: "r"(r0), "r"(r1) : "memory");
+
+    while (1) {}
+}

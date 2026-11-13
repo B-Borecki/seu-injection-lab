@@ -12,9 +12,7 @@ OBJS = $(SRCS:.c=.o)
 
 SEU_SEED ?= 0x12345678
 
-MAX_SEQ ?= 2000
-
-CFLAGS  = -mcpu=cortex-m3 -mthumb -O0 -g -ffreestanding -nostdlib -I. -IFreeRTOS/Source/include -IFreeRTOS/Source/portable/GCC/ARM_CM3 -Wall -Wextra -DEXPERIMENT_$(EXP) -DSEU_SEED=$(SEU_SEED) -DMAX_SEQ=$(MAX_SEQ)
+CFLAGS  = -mcpu=cortex-m3 -mthumb -O0 -g -ffreestanding -nostdlib -I. -IFreeRTOS/Source/include -IFreeRTOS/Source/portable/GCC/ARM_CM3 -Wall -Wextra -DEXPERIMENT_$(EXP) -DSEU_SEED=$(SEU_SEED)
 
 LDFLAGS = -T linker.ld -nostdlib
 
@@ -37,7 +35,7 @@ clean:
 	rm -f *.o *.elf *.bin *.size *.seu_size *.log
 
 run:
-	$(QEMU) -M lm3s6965evb -kernel $(TARGET).elf -nographic -d in_asm,exec,nochain -D exec.log
+	$(QEMU) -M lm3s6965evb -kernel $(TARGET).elf -nographic -semihosting-config enable=on,target=native -d in_asm,exec,nochain -D exec.log
 
 EXPERIMENTS := QUEUE_PROTECT SEQ_TMR CMD_CLAMP SENSOR_CRC FULL
 
@@ -49,12 +47,12 @@ experiments:
 	@echo "Running BASELINE"
 	@echo ""
 	@$(MAKE) clean > /dev/null 2>&1
-	@$(MAKE) EXP=BASELINE MAX_SEQ=$(MAX_SEQ) > /dev/null 2>&1
+	@$(MAKE) EXP=BASELINE > /dev/null 2>&1
 	@cp $(TARGET).size $(LOGS_DIR)/BASELINE.size
 	@cp $(TARGET).seu_size $(LOGS_DIR)/BASELINE.seu_size || true
 	@$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic > $(LOGS_DIR)/BASELINE.log 2>&1 || true
 	@$(QEMU) -M lm3s6965evb -kernel $(TARGET).elf -nographic -d in_asm,exec,nochain -D exec.log > /dev/null 2>&1 || true
-	@python3 instruction_counter.py exec.log BASELINE $(MAX_SEQ) > $(LOGS_DIR)/BASELINE.instr || true
+	@python3 instruction_counter.py exec.log BASELINE > $(LOGS_DIR)/BASELINE.instr || true
 	@i=1; \
 	for SEED in $(SEEDS); do \
 		SERIES=$$(printf "exp_%02d" $$i); \
@@ -67,12 +65,12 @@ experiments:
 			echo "Running $$EXP with seed=$$SEED"; \
 			echo ""; \
 			$(MAKE) clean > /dev/null 2>&1; \
-			$(MAKE) EXP=$$EXP SEU_SEED=$$SEED MAX_SEQ=$(MAX_SEQ) > /dev/null 2>&1; \
+			$(MAKE) EXP=$$EXP SEU_SEED=$$SEED > /dev/null 2>&1; \
 			cp $(TARGET).size $(LOGS_DIR)/$$SERIES/$$EXP.size; \
 			cp $(TARGET).seu_size $(LOGS_DIR)/$$SERIES/$$EXP.seu_size || true; \
 			$(QEMU) -M lm3s6965evb -kernel $(TARGET).bin -nographic > $(LOGS_DIR)/$$SERIES/$$EXP.log 2>&1 || true; \
 			$(QEMU) -M lm3s6965evb -kernel $(TARGET).elf -nographic -d in_asm,exec,nochain -D exec.log > /dev/null 2>&1 || true; \
-			python3 instruction_counter.py exec.log $$EXP $(MAX_SEQ) > $(LOGS_DIR)/$$SERIES/$$EXP.instr || true; \
+			python3 instruction_counter.py exec.log $$EXP > $(LOGS_DIR)/$$SERIES/$$EXP.instr || true; \
 		done; \
 		i=$$((i + 1)); \
 	done
