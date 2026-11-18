@@ -13,24 +13,24 @@
   #define QUEUE_PROTECT_ENABLE 1
   #define SEQ_TMR_ENABLE 1
   #define CLAMP_ENABLE 1
-#elif defined(EXPERIMENT_SENSOR_CRC)
+#elif defined(EXPERIMENT_SENSOR_ECC)
   #define SEU_ENABLE 1
   #define QUEUE_PROTECT_ENABLE 1
   #define SEQ_TMR_ENABLE 1
   #define CLAMP_ENABLE 1
-  #define SENSOR_CRC_ENABLE 1
+  #define SENSOR_ECC_ENABLE 1
 #elif defined(EXPERIMENT_FULL)
   #define SEU_ENABLE 1
   #define SEQ_TMR_ENABLE 1
-  #define SENSOR_CRC_ENABLE 1
+  #define SENSOR_ECC_ENABLE 1
   #define QUEUE_PROTECT_ENABLE 1
   #define CLAMP_ENABLE 1
-  #define SENSOR_PREV_CRC_ENABLE 1
+  #define SENSOR_PREV_ECC_ENABLE 1
 #elif defined(EXPERIMENT_DATA_BSS)
   #define SEU_IN_DATA_AND_BSS 1
   #define SEU_ENABLE 1
   #define SEQ_TMR_ENABLE 0
-  #define SENSOR_CRC_ENABLE 0
+  #define SENSOR_ECC_ENABLE 0
   #define QUEUE_PROTECT_ENABLE 0
   #define CLAMP_ENABLE 0
 #endif
@@ -41,8 +41,8 @@
 #ifndef SEQ_TMR_ENABLE
   #define SEQ_TMR_ENABLE 0
 #endif
-#ifndef SENSOR_CRC_ENABLE
-  #define SENSOR_CRC_ENABLE 0
+#ifndef SENSOR_ECC_ENABLE
+  #define SENSOR_ECC_ENABLE 0
 #endif
 #ifndef QUEUE_PROTECT_ENABLE
   #define QUEUE_PROTECT_ENABLE 0
@@ -50,11 +50,15 @@
 #ifndef CLAMP_ENABLE
   #define CLAMP_ENABLE 0
 #endif
-#ifndef SENSOR_PREV_CRC_ENABLE
-  #define SENSOR_PREV_CRC_ENABLE 0
+#ifndef SENSOR_PREV_ECC_ENABLE
+  #define SENSOR_PREV_ECC_ENABLE 0
 #endif
 #ifndef SEU_IN_DATA_AND_BSS
   #define SEU_IN_DATA_AND_BSS 0
+#endif
+
+#if SENSOR_PREV_ECC_ENABLE && !SENSOR_ECC_ENABLE
+#error "SENSOR_PREV_ECC_ENABLE requires SENSOR_ECC_ENABLE"
 #endif
 
 #ifndef SEU_SEED
@@ -84,27 +88,17 @@ extern uint32_t _eseu;
 extern uint32_t _sdata;
 extern uint32_t _ebss;
 
-#if SENSOR_CRC_ENABLE || SENSOR_PREV_CRC_ENABLE
-  // próbka sensora z CRC
-  typedef struct
-  {
+typedef struct
+{
     uint32_t seq;
-    int32_t  bx;
-    int32_t  by;
-    int32_t  bz;
-    uint8_t crc;
-  } sensor_sample;
-
-#else
-  // próbka sensora bez ochrony
-  typedef struct
-  {
-    uint32_t seq;
-    int32_t  bx;
-    int32_t  by;
-    int32_t  bz;
-  } sensor_sample;
+    int32_t bx;
+    int32_t by;
+    int32_t bz;
+#if SENSOR_ECC_ENABLE
+    uint8_t ecc[4];
 #endif
+} sensor_sample;
+
 // komenda cewek
 typedef struct
 {
@@ -160,6 +154,8 @@ static int32_t moment_y;
 __attribute__((section(".seu_section")))
 static int32_t moment_z;
 
+static coil_cmd debug_cmd_after_clamp;
+
 // zmienne do statystyk i referencji
 static volatile uint32_t sample_count = 0;
 static volatile uint32_t error_count = 0;
@@ -171,12 +167,15 @@ static volatile uint32_t expected_seq = 0;
 static volatile uint32_t tmr_corrections = 0;
 static volatile uint32_t dmr_corrections = 0;
 static volatile uint32_t clamp_activations = 0;
-static volatile uint32_t crc_detections = 0;
+static volatile uint32_t ecc_corrections = 0;
+static volatile uint32_t ecc_uncorrectable = 0;
+static volatile uint32_t ecc_sensor_corrections = 0;
+static volatile uint32_t ecc_prev_corrections = 0;
 static volatile uint32_t detected_disturbances = 0;
 
 static SemaphoreHandle_t sample_completed;
 
-#if QUEUE_PROTECT_ENABLE || SENSOR_CRC_ENABLE || SENSOR_PREV_CRC_ENABLE
+#if QUEUE_PROTECT_ENABLE
 
 static uint8_t crc8(uint8_t *data, int len)
 {
@@ -199,16 +198,6 @@ static uint8_t crc8(uint8_t *data, int len)
   
   return crc;
 }
-
-#endif
-
-#if SENSOR_CRC_ENABLE || SENSOR_PREV_CRC_ENABLE
-
-static uint8_t crc8_sensor(sensor_sample *s)
-{
-  return crc8((uint8_t*)s, 16);
-}
-
 #endif
 
 #if QUEUE_PROTECT_ENABLE
@@ -371,47 +360,202 @@ static void inc_seq(void)
 
 static void clamp_cmd(coil_cmd *cmd)
 {
-  uint8_t detection = 0;
   if (cmd->mx > CMD_M_MAX)
   {
-    detection=1;
-    ++clamp_activations;
-    cmd->mx = CMD_M_MAX;
+      clamp_activations++;
+      detected_disturbances++;
+      cmd->mx = CMD_M_MAX;
   }
-  if (cmd->mx < -CMD_M_MAX)
+  else if (cmd->mx < -CMD_M_MAX)
   {
-    detection=1;
-    ++clamp_activations;
-    cmd->mx = -CMD_M_MAX;
-  }
-  if (cmd->my > CMD_M_MAX)
-  {
-    detection=1;
-    ++clamp_activations;
-    cmd->my = CMD_M_MAX;
-  }
-  if (cmd->my < -CMD_M_MAX)
-  {
-    detection=1;
-    ++clamp_activations;
-    cmd->my = -CMD_M_MAX;
-  }
-  if (cmd->mz > CMD_M_MAX)
-  {
-    detection=1;
-    ++clamp_activations;
-    cmd->mz = CMD_M_MAX;
-  }  
-  if (cmd->mz < -CMD_M_MAX)
-  {
-    detection=1;
-    ++clamp_activations;
-    cmd->mz = -CMD_M_MAX;
+      clamp_activations++;
+      detected_disturbances++;
+      cmd->mx = -CMD_M_MAX;
   }
 
-  if (detection) {
-    detected_disturbances++;
+  if (cmd->my > CMD_M_MAX)
+  {
+      clamp_activations++;
+      detected_disturbances++;
+      cmd->my = CMD_M_MAX;
   }
+  else if (cmd->my < -CMD_M_MAX)
+  {
+      clamp_activations++;
+      detected_disturbances++;
+      cmd->my = -CMD_M_MAX;
+  }
+
+  if (cmd->mz > CMD_M_MAX)
+  {
+      clamp_activations++;
+      detected_disturbances++;
+      cmd->mz = CMD_M_MAX;
+  }
+  else if (cmd->mz < -CMD_M_MAX)
+  {
+      clamp_activations++;
+      detected_disturbances++;
+      cmd->mz = -CMD_M_MAX;
+  }
+}
+
+#endif
+
+#if SENSOR_ECC_ENABLE
+
+typedef enum
+{
+    ECC_OK,
+    ECC_CORRECTED,
+    ECC_UNCORRECTABLE
+} ecc_result_t;
+
+// Zwraca 1 przy nieparzystej liczbie jedynek
+static uint8_t parity32(uint32_t x)
+{
+    x ^= x >> 16;
+    x ^= x >> 8;
+    x ^= x >> 4;
+    x ^= x >> 2;
+    x ^= x >> 1;
+    return (uint8_t)(x & 1);
+}
+
+// Generuje SEC-DED dla 32-bitowej wartości
+static uint8_t ecc_encode32(uint32_t data)
+{
+  uint8_t ecc = 0;
+  uint32_t bit = 0;
+  // 32 bity danych + 6 pozycji Hamminga (pozycje 1 do 38)
+  for (uint32_t pos = 1; pos <= 38; pos++)
+  {
+    // Sprawdź czy potęga dwójki
+    if ((pos & (pos - 1)) == 0)
+      continue;
+    if ((data >> bit) & 1)
+    {
+      ecc ^= (uint8_t)pos;
+    }
+    bit++;
+  }
+  uint8_t global = parity32(data) ^ parity32(ecc & 0b00111111);
+  return (uint8_t)((ecc & 0b00111111) | (global << 7));
+}
+
+// Sprawdza i ewentualnie naprawia 32-bitową wartość
+static ecc_result_t ecc_check32(uint32_t *data, uint8_t *ecc)
+{
+  uint8_t old_ecc = *ecc;
+  uint32_t current_data = *data;
+  uint8_t new_ecc = ecc_encode32(current_data);
+  uint8_t syndrome = (old_ecc ^ new_ecc) & 0b00111111;
+
+  uint8_t old_global = (old_ecc >> 7) & 1u;
+  uint8_t new_global = parity32(current_data) ^ parity32(old_ecc & 0b00111111);
+  uint8_t global_bad = (old_global != new_global);
+
+  if (syndrome == 0 && !global_bad)
+  {
+    return ECC_OK;
+  }
+
+  // Dwa błędy: syndrom != 0, a globalna parzystość się zgadza
+  if (syndrome != 0 && !global_bad)
+  {
+    return ECC_UNCORRECTABLE;
+  }
+
+  // Uszkodzony sam bit globalnej parzystości
+  if (syndrome == 0 && global_bad)
+  {
+    *ecc = new_ecc;
+    return ECC_CORRECTED;
+  }
+
+  // Uszkodzony jeden z bitów ECC
+  if ((syndrome & (syndrome - 1)) == 0)
+  {
+    *ecc = new_ecc;
+    return ECC_CORRECTED;
+  }
+
+  // Uszkodzony jeden bit danych
+  uint32_t parity_positions = 0;
+  uint32_t temp = syndrome;
+  while (temp > 1) 
+  {
+    temp >>= 1;
+    parity_positions++;
+  }
+  uint32_t bit = syndrome - parity_positions - 2;
+  if (bit >= 32)
+  {
+    return ECC_UNCORRECTABLE;
+  }
+  current_data ^= (1 << bit);
+
+  *data = current_data;
+  *ecc = ecc_encode32(current_data);
+  return ECC_CORRECTED;
+}
+
+typedef enum
+{
+    ECC_SENSOR,
+    ECC_PREV_SAMPLE
+} ecc_source_t;
+
+static void ecc_check_sensor(sensor_sample *sample, ecc_source_t source)
+{
+    sensor_sample corrected = *sample;
+
+    uint32_t data[4] =
+    {
+        corrected.seq,
+        (uint32_t)corrected.bx,
+        (uint32_t)corrected.by,
+        (uint32_t)corrected.bz
+    };
+
+    for (uint32_t i = 0; i < 4; i++)
+    {
+        ecc_result_t result =
+            ecc_check32(&data[i], &corrected.ecc[i]);
+
+        if (result == ECC_UNCORRECTABLE)
+        {
+            ecc_uncorrectable++;
+            detected_disturbances++;
+
+            uart_puts("[ECC UNCORRECTABLE]\r\n");
+            qemu_exit(1);
+        }
+
+        if (result == ECC_CORRECTED)
+        {
+            ecc_corrections++;
+            detected_disturbances++;
+
+            if (source == ECC_SENSOR)
+            {
+                ecc_sensor_corrections++;
+                uart_puts("[SENSOR ECC CORRECTED]\r\n");
+            }
+            else
+            {
+                ecc_prev_corrections++;
+                uart_puts("[PREV SAMPLE ECC CORRECTED]\r\n");
+            }
+        }
+    }
+
+    corrected.seq = data[0];
+    corrected.bx  = (int32_t)data[1];
+    corrected.by  = (int32_t)data[2];
+    corrected.bz  = (int32_t)data[3];
+
+    *sample = corrected;
 }
 
 #endif
@@ -467,6 +611,38 @@ static void task_sensor(void *arg)
   const int32_t BY = -5000;
   const int32_t BZ = 12000;
 
+  uart_puts("[ADDR] cmd_controller.my=");
+  uart_puthex_u32((uint32_t)&cmd_controller.my);
+  uart_puts("\r\n");
+
+  uart_puts("[ADDR] cmd_actuator.my=");
+  uart_puthex_u32((uint32_t)&cmd_actuator.my);
+  uart_puts("\r\n");
+
+  uart_puts("[ADDR] moment_y=");
+  uart_puthex_u32((uint32_t)&moment_y);
+  uart_puts("\r\n");
+
+  uart_puts("[ADDR] prev_sample.by=");
+  uart_puthex_u32((uint32_t)&prev_sample.by);
+  uart_puts("\r\n");
+
+  uart_puts("[ADDR] sample_controller.by=");
+  uart_puthex_u32((uint32_t)&sample_controller.by);
+  uart_puts("\r\n");
+
+  uart_puts("[ADDR] sample_sensor.bz=");
+  uart_puthex_u32((uint32_t)&sample_sensor.bz);
+  uart_puts("\r\n");
+
+  uart_puts("[ADDR] sample_controller.bz=");
+  uart_puthex_u32((uint32_t)&sample_controller.bz);
+  uart_puts("\r\n");
+
+  uart_puts("[ADDR] prev_sample.bz=");
+  uart_puthex_u32((uint32_t)&prev_sample.bz);
+  uart_puts("\r\n");
+
   while (1)
   {
     uint32_t seq = get_seq();
@@ -487,9 +663,11 @@ static void task_sensor(void *arg)
       .bz  = BZ + dz + variation / 3
     };
     
-    #if SENSOR_CRC_ENABLE
-        // oblicz crc przed wysłaniem próbki
-        sample_sensor.crc = crc8_sensor(&sample_sensor);
+    #if SENSOR_ECC_ENABLE
+        sample_sensor.ecc[0] = ecc_encode32(sample_sensor.seq);
+        sample_sensor.ecc[1] = ecc_encode32(sample_sensor.bx);
+        sample_sensor.ecc[2] = ecc_encode32(sample_sensor.by);
+        sample_sensor.ecc[3] = ecc_encode32(sample_sensor.bz);
     #endif
     
     xQueueSend(get_sensor_samples(), &sample_sensor, portMAX_DELAY);
@@ -506,9 +684,12 @@ static void task_controller(void *arg)
 {
   (void)arg;
 
-  // Pierwsza próbka jest porpawna, bo task_seu startuje z opóźnieniem
   if (xQueueReceive(get_sensor_samples(), &sample_controller, portMAX_DELAY) == pdPASS)
   {
+  #if SENSOR_ECC_ENABLE
+      ecc_check_sensor(&sample_controller, ECC_SENSOR);
+  #endif
+
     prev_sample = sample_controller;
     good_samples++;
     xSemaphoreGive(sample_completed);
@@ -518,52 +699,36 @@ static void task_controller(void *arg)
   {
     if (xQueueReceive(get_sensor_samples(), &sample_controller, portMAX_DELAY) != pdPASS) {continue;}
 
-    #if SENSOR_CRC_ENABLE
-      // weryfikacja poprawności próbki
-      if (sample_controller.crc != crc8_sensor(&sample_controller))
-      {
-        crc_detections++;
-        detected_disturbances++;
-        omitted_samples++;
-        uart_puts("[SENSOR SAMPLE CORRUPTED] omitting sample\r\n");
-        xSemaphoreGive(sample_completed);
-        continue;
-      }
+    #if SENSOR_ECC_ENABLE
+        ecc_check_sensor(&sample_controller, ECC_SENSOR);
     #endif
 
-    #if SENSOR_PREV_CRC_ENABLE
-      if (prev_sample.crc != crc8_sensor(&prev_sample))
-      {
-        prev_sample = sample_controller;
-        crc_detections++;
-        detected_disturbances++;
-        omitted_samples++;
-        uart_puts("[PREVIOUS SENSOR SAMPLE CORRUPTED] omitting sample\r\n");
-        xSemaphoreGive(sample_completed);
-        continue;
-      }
+
+    #if SENSOR_PREV_ECC_ENABLE
+        ecc_check_sensor(&prev_sample, ECC_PREV_SAMPLE);
     #endif
 
     diff_x = saturate_int32((int64_t)sample_controller.bx - prev_sample.bx);
     diff_y = saturate_int32((int64_t)sample_controller.by - prev_sample.by);
     diff_z = saturate_int32((int64_t)sample_controller.bz - prev_sample.bz);
 
-    moment_x = -(int64_t)K * diff_x;
-    moment_y = -(int64_t)K * diff_y;
-    moment_z = -(int64_t)K * diff_z;
+    moment_x = saturate_int32(-(int64_t)K * diff_x);
+    moment_y = saturate_int32(-(int64_t)K * diff_y);
+    moment_z = saturate_int32(-(int64_t)K * diff_z);
 
     cmd_controller = (coil_cmd)
     {
         .seq = sample_controller.seq,
         .prev_seq = prev_sample.seq,
-        .mx = saturate_int32(moment_x),
-        .my = saturate_int32(moment_y),
-        .mz = saturate_int32(moment_z)
+        .mx = moment_x,
+        .my = moment_y,
+        .mz = moment_z
     };
 
     #if CLAMP_ENABLE
         clamp_cmd(&cmd_controller);
     #endif
+    debug_cmd_after_clamp = cmd_controller;
 
     xQueueSend(get_coil_cmds(), &cmd_controller, portMAX_DELAY);
 
@@ -608,33 +773,65 @@ static void task_actuator(void *arg)
       uart_puts(" err=");
       uart_putdec_u64(err);
       uart_puts("\r\n");
+
+      uart_puts("[DEBUG ERR] seq=");
+      uart_putdec_u32(cmd_actuator.seq);
+
+      uart_puts(" prev_seq=");
+      uart_putdec_u32(cmd_actuator.prev_seq);
+
+      uart_puts(" expected_seq=");
+      uart_putdec_u32(expected_seq);
+
+      uart_puts("\r\n");
+
+      uart_puts("[DEBUG CMD] in actuator mx=");
+      uart_puthex_i32(cmd_actuator.mx);
+
+      uart_puts(" my=");
+      uart_puthex_i32(cmd_actuator.my);
+
+      uart_puts(" mz=");
+      uart_puthex_i32(cmd_actuator.mz);
+
+      uart_puts("\r\n");
+
+      uart_puts("After clamp mx=");
+      uart_puthex_i32(debug_cmd_after_clamp.mx);
+
+      uart_puts(" my=");
+      uart_puthex_i32(debug_cmd_after_clamp.my);
+
+      uart_puts(" mz=");
+      uart_puthex_i32(debug_cmd_after_clamp.mz);
+
+      uart_puts("\r\n");
+
+      uart_puts("[DEBUG REF] mx=");
+      uart_puthex_i32(mx_ref);
+
+      uart_puts(" my=");
+      uart_puthex_i32(my_ref);
+
+      uart_puts(" mz=");
+      uart_puthex_i32(mz_ref);
+
+      uart_puts("\r\n");
+
+      uart_puts("[DEBUG DIFF] ex=");
+      uart_putdec_u64((uint64_t)ex);
+
+      uart_puts(" ey=");
+      uart_putdec_u64((uint64_t)ey);
+
+      uart_puts(" ez=");
+      uart_putdec_u64((uint64_t)ez);
+
+      uart_puts("\r\n");
     }
     else
     {
       good_samples++;
-    }
-
-    if (err > 1000000)
-    {
-        uart_puts("[DEBUG] mx=");
-        uart_puthex_i32(cmd_actuator.mx);
-
-        uart_puts(" my=");
-        uart_puthex_i32(cmd_actuator.my);
-
-        uart_puts(" mz=");
-        uart_puthex_i32(cmd_actuator.mz);
-
-        uart_puts(" mx_ref=");
-        uart_puthex_i32(mx_ref);
-
-        uart_puts(" my_ref=");
-        uart_puthex_i32(my_ref);
-
-        uart_puts(" mz_ref=");
-        uart_puthex_i32(mz_ref);
-
-        uart_puts("\r\n");
     }
 
     if (sample_count >= MAX_SEQ)
@@ -677,8 +874,20 @@ static void task_actuator(void *arg)
         uart_putdec_u32(dmr_corrections);
         uart_puts("\r\n");
 
-        uart_puts("crc detections=");
-        uart_putdec_u32(crc_detections);
+        uart_puts("ecc corrections=");
+        uart_putdec_u32(ecc_corrections);
+        uart_puts("\r\n");
+
+        uart_puts("ecc sensor corrections=");
+        uart_putdec_u32(ecc_sensor_corrections);
+        uart_puts("\r\n");
+
+        uart_puts("ecc prev corrections=");
+        uart_putdec_u32(ecc_prev_corrections);
+        uart_puts("\r\n");
+
+        uart_puts("ecc uncorrectable=");
+        uart_putdec_u32(ecc_uncorrectable);
         uart_puts("\r\n");
 
         uart_puts("clamp activations=");

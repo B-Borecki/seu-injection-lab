@@ -37,7 +37,7 @@ clean:
 run:
 	$(QEMU) -M lm3s6965evb -kernel $(TARGET).elf -nographic -semihosting-config enable=on,target=native -d in_asm,exec,nochain -D exec.log
 
-EXPERIMENTS := QUEUE_PROTECT SEQ_TMR CMD_CLAMP SENSOR_CRC FULL
+EXPERIMENTS := QUEUE_PROTECT SEQ_TMR CMD_CLAMP SENSOR_ECC FULL
 
 SEEDS := 0x12345678 0x24688642 0x11111111 0x76893011 0x3579753 0x67676767 0x77761234 0x99763333 0x87654321 0x09322003
 
@@ -95,9 +95,9 @@ seq_tmr:
 	$(MAKE) EXP=SEQ_TMR
 	$(MAKE) run
 	
-sensor_crc:
+sensor_ecc:
 	$(MAKE) clean
-	$(MAKE) EXP=SENSOR_CRC
+	$(MAKE) EXP=SENSOR_ECC
 	$(MAKE) run
 
 
@@ -123,4 +123,4 @@ data_bss:
 	$(MAKE) run
 
 
-.PHONY: all clean baseline seu_only seq_tmr cmd_clamp sensor_crc queue_protect cmd_rate_limit full data_bss experiments
+.PHONY: all clean baseline seu_only seq_tmr cmd_clamp sensor_ecc queue_protect cmd_rate_limit full data_bss experiments
